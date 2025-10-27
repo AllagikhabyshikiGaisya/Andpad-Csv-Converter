@@ -23,9 +23,8 @@ function detectVendor(filename, headers) {
   const normalizedFilename = filename
     .toLowerCase()
     .replace(/\s+/g, '') // Remove spaces
-    .replace(/[()（）]/g, '') // Remove parentheses
+    .replace(/[()（）\[\]【】]/g, '') // Remove ALL brackets - parentheses AND square brackets
     .replace(/\.csv$/i, '') // Remove .csv extension
-
   // Try to detect by filename first
   for (const file of mappingFiles) {
     try {
@@ -43,7 +42,10 @@ function detectVendor(filename, headers) {
         }
 
         for (const pattern of patterns) {
-          const normalizedPattern = pattern.toLowerCase().replace(/\s+/g, '')
+          const normalizedPattern = pattern
+            .toLowerCase()
+            .replace(/\s+/g, '')
+            .replace(/[()（）\[\]【】]/g, '') // Same here
 
           if (normalizedFilename.includes(normalizedPattern)) {
             console.log(`✓ Vendor detected by filename: ${mapping.vendor}`)
