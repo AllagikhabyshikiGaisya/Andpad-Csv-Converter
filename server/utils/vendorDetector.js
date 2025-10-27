@@ -19,12 +19,15 @@ function detectVendor(filename, headers) {
   console.log('CSV Headers:', headers)
   console.log('Available mappings:', mappingFiles)
 
-  // Normalize filename for better matching
+  // Normalize filename for better matching - REMOVE ALL BRACKETS
   const normalizedFilename = filename
     .toLowerCase()
     .replace(/\s+/g, '') // Remove spaces
-    .replace(/[()（）\[\]【】]/g, '') // Remove ALL brackets - parentheses AND square brackets
+    .replace(/[()（）\[\]【】]/g, '') // Remove ALL brackets (parentheses AND square brackets)
     .replace(/\.csv$/i, '') // Remove .csv extension
+
+  console.log('Normalized filename:', normalizedFilename)
+
   // Try to detect by filename first
   for (const file of mappingFiles) {
     try {
@@ -45,11 +48,16 @@ function detectVendor(filename, headers) {
           const normalizedPattern = pattern
             .toLowerCase()
             .replace(/\s+/g, '')
-            .replace(/[()（）\[\]【】]/g, '') // Same here
+            .replace(/[()（）\[\]【】]/g, '') // Same normalization
+
+          console.log(
+            `  Checking pattern: "${pattern}" -> "${normalizedPattern}"`
+          )
 
           if (normalizedFilename.includes(normalizedPattern)) {
             console.log(`✓ Vendor detected by filename: ${mapping.vendor}`)
             console.log(`  Pattern matched: "${pattern}"`)
+            console.log(`  Custom parser: ${mapping.customParser}`)
             return {
               detected: true,
               mapping: mapping,
@@ -75,7 +83,21 @@ function detectVendor(filename, headers) {
       const mappingPath = path.join(mappingsDir, file)
       const mapping = JSON.parse(fs.readFileSync(mappingPath, 'utf-8'))
 
-      const sourceColumns = Object.keys(mapping.map)
+      // Skip custom parser mappings in header detection if they have no map
+      if (
+        mapping.customParser &&
+        (!mapping.map || Object.keys(mapping.map).length === 0)
+      ) {
+        console.log(`Skipping ${file} - custom parser with no map columns`)
+        continue
+      }
+
+      const sourceColumns = Object.keys(mapping.map || {})
+
+      if (sourceColumns.length === 0) {
+        continue
+      }
+
       let matchCount = 0
       const matchedColumns = []
 
