@@ -1,118 +1,88 @@
 const express = require('express')
 const multer = require('multer')
 const Papa = require('papaparse')
+const XLSX = require('xlsx')
 const { detectVendor } = require('../utils/vendorDetector')
 const { generateExcel } = require('../utils/excelGenerator')
 
 const router = express.Router()
 
-// Configure multer for Vercel (memory storage with size limits)
+// Configure multer
+const storage = multer.memoryStorage()
 const upload = multer({
-  storage: multer.memoryStorage(),
+  storage: storage,
   limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB limit
-    files: 1,
+    fileSize: 10 * 1024 * 1024, // 10MB
+  },
+  fileFilter: (req, file, cb) => {
+    const ext = file.originalname.toLowerCase()
+    if (ext.endsWith('.csv') || ext.endsWith('.xlsx') || ext.endsWith('.xls')) {
+      cb(null, true)
+    } else {
+      cb(new Error('Only CSV and Excel files are allowed'))
+    }
   },
 })
 
-// Add error handling middleware for multer
-const multerErrorHandler = (err, req, res, next) => {
-  if (err instanceof multer.MulterError) {
-    if (err.code === 'LIMIT_FILE_SIZE') {
-      return res.status(400).json({
-        success: false,
-        message: {
-          en: 'File too large. Maximum size is 10MB.',
-          ja: 'ファイルが大きすぎます。最大サイズは10MBです。',
-        },
-      })
-    }
-    return res.status(400).json({
-      success: false,
-      message: {
-        en: 'File upload error.',
-        ja: 'ファイルアップロードエラー。',
-      },
-    })
-  }
-  next(err)
-}
-
-router.post('/convert', (req, res, next) => {
-  upload.single('file')(req, res, err => {
-    if (err) {
-      return multerErrorHandler(err, req, res, next)
-    }
-    handleConvert(req, res, next)
-  })
-})
-
-async function handleConvert(req, res, next) {
+router.post('/convert', upload.single('file'), async (req, res) => {
   try {
-    console.log('Request received')
-    console.log('File:', req.file ? 'Present' : 'Missing')
-    console.log('Body:', req.body)
+    console.log('=== CONVERSION REQUEST START ===')
 
-    // Validate file upload
     if (!req.file) {
       return res.status(400).json({
         success: false,
         message: {
-          en: 'No file uploaded. Please select a CSV file.',
-          ja: 'ファイルがアップロードされていません。CSVファイルを選択してください。',
+          en: 'No file uploaded.',
+          ja: 'ファイルがアップロードされていません。',
         },
       })
     }
 
-    // Validate file type
-    if (!req.file.originalname.toLowerCase().endsWith('.csv')) {
-      return res.status(400).json({
-        success: false,
-        message: {
-          en: 'Invalid file type. Please upload a CSV file.',
-          ja: '無効なファイル形式です。CSVファイルをアップロードしてください。',
-        },
+    console.log('File received:', req.file.originalname)
+    console.log('File size:', req.file.size)
+
+    let csvData
+    let headers
+
+    // Check file type and parse accordingly
+    if (req.file.originalname.toLowerCase().endsWith('.csv')) {
+      // Parse CSV
+      const fileContent = req.file.buffer.toString('utf-8')
+      const parseResult = Papa.parse(fileContent, {
+        header: true,
+        skipEmptyLines: true,
+        encoding: 'utf-8',
       })
+
+      if (parseResult.errors.length > 0) {
+        console.error('CSV parse errors:', parseResult.errors)
+      }
+
+      csvData = parseResult.data
+      headers = Object.keys(csvData[0] || {})
+    } else {
+      // Parse Excel (XLSX/XLS)
+      const workbook = XLSX.read(req.file.buffer, { type: 'buffer' })
+      const firstSheet = workbook.Sheets[workbook.SheetNames[0]]
+      csvData = XLSX.utils.sheet_to_json(firstSheet, { defval: '' })
+      headers = Object.keys(csvData[0] || {})
     }
 
-    // Parse CSV
-    const fileContent = req.file.buffer.toString('utf-8')
-    const parseResult = Papa.parse(fileContent, {
-      header: true,
-      skipEmptyLines: true,
-      encoding: 'utf-8',
-    })
-
-    if (parseResult.errors.length > 0) {
-      console.error('CSV Parse errors:', parseResult.errors)
-      return res.status(400).json({
-        success: false,
-        message: {
-          en: 'Error parsing CSV file. Please check the file format.',
-          ja: 'CSVファイルの解析エラー。ファイル形式を確認してください。',
-        },
-        details: parseResult.errors,
-      })
-    }
-
-    const csvData = parseResult.data
+    console.log('Parsed rows:', csvData.length)
+    console.log('Headers:', headers)
 
     if (!csvData || csvData.length === 0) {
       return res.status(400).json({
         success: false,
         message: {
-          en: 'CSV file is empty.',
-          ja: 'CSVファイルが空です。',
+          en: 'File is empty or unreadable.',
+          ja: 'ファイルが空か読み取れません。',
         },
       })
     }
 
-    const headers = Object.keys(csvData[0] || {})
-    console.log('CSV Headers:', headers)
-
     // Detect vendor
     const vendorResult = detectVendor(req.file.originalname, headers)
-    console.log('Vendor detection:', vendorResult)
 
     if (!vendorResult.detected) {
       return res.status(400).json({
@@ -124,15 +94,21 @@ async function handleConvert(req, res, next) {
       })
     }
 
-    // Generate Excel file
+    console.log('Vendor detected:', vendorResult.mapping.vendor)
+
+    // Generate Excel in ANDPAD format
     const excelResult = generateExcel(csvData, vendorResult.mapping)
 
     if (!excelResult.success) {
       return res.status(400).json({
         success: false,
         message: {
-          en: `Column mismatch: ${excelResult.missingColumns.join(', ')}`,
-          ja: `カラムが一致しません: ${excelResult.missingColumns.join(', ')}`,
+          en: `Conversion failed: ${
+            excelResult.error || excelResult.missingColumns?.join(', ')
+          }`,
+          ja: `変換に失敗しました: ${
+            excelResult.error || excelResult.missingColumns?.join(', ')
+          }`,
         },
       })
     }
@@ -142,9 +118,10 @@ async function handleConvert(req, res, next) {
     const yearMonth = `${date.getFullYear()}${String(
       date.getMonth() + 1
     ).padStart(2, '0')}`
-    const filename = `${yearMonth}_${vendorResult.mapping.vendor}_請求書.xlsx`
+    const filename = `${yearMonth}_${vendorResult.mapping.vendor}_ANDPAD請求書.xlsx`
 
     console.log('Sending file:', filename)
+    console.log('Rows converted:', excelResult.rowCount)
 
     // Send file
     res.setHeader(
@@ -156,6 +133,8 @@ async function handleConvert(req, res, next) {
       `attachment; filename="${encodeURIComponent(filename)}"`
     )
     res.send(excelResult.buffer)
+
+    console.log('=== CONVERSION SUCCESS ===')
   } catch (error) {
     console.error('Conversion error:', error)
     res.status(500).json({
@@ -167,6 +146,6 @@ async function handleConvert(req, res, next) {
       error: error.message,
     })
   }
-}
+})
 
 module.exports = router
