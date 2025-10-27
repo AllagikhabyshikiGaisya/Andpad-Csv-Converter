@@ -1,5 +1,5 @@
 // ============================================
-// COMPLETE excelGenerator.js
+// COMPLETE excelGenerator.js - FIXED VERSION
 // ============================================
 const XLSX = require('xlsx')
 
@@ -35,27 +35,41 @@ function generateExcel(csvData, mapping) {
     console.log('Vendor:', mapping.vendor)
     console.log('Has custom parser:', mapping.customParser)
     console.log('Input rows:', csvData.length)
+    console.log('Mapping object:', JSON.stringify(mapping, null, 2))
 
     let transformedData = []
 
-    // Use custom parser if specified
+    // CRITICAL FIX: Check customParser flag correctly
     if (mapping.customParser === true) {
-      console.log('Using custom parser for:', mapping.vendor)
+      console.log('✓ Using custom parser for:', mapping.vendor)
       transformedData = parseWithCustomLogic(csvData, mapping.vendor)
-    } else {
-      // Standard mapping
-      transformedData = parseWithMapping(csvData, mapping)
-    }
 
-    if (!transformedData || transformedData.length === 0) {
-      console.error('No data after transformation')
-      return {
-        success: false,
-        error: 'No valid data rows found. Please check file format.',
+      if (!transformedData || transformedData.length === 0) {
+        console.error('Custom parser returned no data')
+        throw new Error(
+          'カスタムパーサーがデータを返しませんでした。ファイル形式を確認してください。'
+        )
+      }
+    } else {
+      // Standard mapping - validate map exists
+      if (!mapping.map || Object.keys(mapping.map).length === 0) {
+        console.error('No mapping configuration found')
+        throw new Error('マッピング設定が見つかりません。')
+      }
+
+      console.log('Using standard mapping')
+      transformedData = parseWithMapping(csvData, mapping)
+
+      if (!transformedData || transformedData.length === 0) {
+        console.error('Standard parser returned no data')
+        throw new Error(
+          'データ行が見つかりませんでした。ファイル形式を確認してください。'
+        )
       }
     }
 
-    console.log('Transformed rows:', transformedData.length)
+    console.log('✓ Transformed rows:', transformedData.length)
+    console.log('Sample row:', JSON.stringify(transformedData[0], null, 2))
 
     // Create workbook
     const workbook = XLSX.utils.book_new()
@@ -82,24 +96,26 @@ function generateExcel(csvData, mapping) {
       rowCount: transformedData.length,
     }
   } catch (error) {
-    console.error('Excel generation error:', error)
+    console.error('❌ Excel generation error:', error.message)
     console.error('Stack:', error.stack)
     return {
       success: false,
-      error: `Generation failed: ${error.message}`,
+      error: error.message || '生成に失敗しました',
     }
   }
 }
 
 function parseWithCustomLogic(csvData, vendorName) {
-  console.log('Custom parser for:', vendorName)
+  console.log('=== CUSTOM PARSER CALLED ===')
+  console.log('Vendor:', vendorName)
+  console.log('Available parsers: クリーン産業')
 
   if (vendorName === 'クリーン産業') {
     return parseCleanIndustry(csvData)
   }
 
-  console.error('No custom parser found for:', vendorName)
-  return []
+  console.error('❌ No custom parser found for:', vendorName)
+  throw new Error(`カスタムパーサーが見つかりません: ${vendorName}`)
 }
 
 function parseCleanIndustry(csvData) {
@@ -108,42 +124,67 @@ function parseCleanIndustry(csvData) {
   console.log('=== CLEAN INDUSTRY PARSER START ===')
   console.log('Input rows:', csvData.length)
 
-  // Debug: show structure
+  // Debug: show first few rows
   if (csvData.length > 0) {
-    console.log('First row keys:', Object.keys(csvData[0]).slice(0, 10))
+    console.log('First row keys:', Object.keys(csvData[0]))
+    console.log('First row values:', Object.values(csvData[0]).slice(0, 15))
+    if (csvData.length > 5) {
+      console.log('Row 5 values:', Object.values(csvData[5]).slice(0, 15))
+      console.log('Row 10 values:', Object.values(csvData[10]).slice(0, 15))
+    }
   }
 
   let dataStartIndex = -1
+  let headerRow = null
 
-  // Find data header row
-  for (let i = 0; i < csvData.length; i++) {
+  // Find data header row (業者名, 品名, etc.)
+  for (let i = 0; i < Math.min(csvData.length, 15); i++) {
     const row = csvData[i]
     const values = Object.values(row)
-    const rowText = values.join(' ').toLowerCase()
+    const rowText = values.join('|').toLowerCase()
 
-    if (rowText.includes('業者名') && rowText.includes('品名')) {
+    console.log(`Row ${i}: ${values.slice(0, 5).join(' | ')}`)
+
+    // Look for header indicators
+    if (
+      rowText.includes('業者名') ||
+      rowText.includes('品名') ||
+      rowText.includes('現場名')
+    ) {
       dataStartIndex = i + 1
-      console.log(`Found header at row ${i}, data starts at ${dataStartIndex}`)
+      headerRow = i
+      console.log(
+        `✓ Header found at row ${i}, data starts at ${dataStartIndex}`
+      )
       break
     }
   }
 
   // If no header found, try from row 10
   if (dataStartIndex === -1) {
-    console.log('No header found, trying from row 10')
+    console.log('⚠ No header found, starting from row 10')
     dataStartIndex = 10
   }
 
+  console.log(`Processing data from row ${dataStartIndex}`)
+
   // Process data rows
   let processedCount = 0
+  let skippedCount = 0
+
   for (let i = dataStartIndex; i < csvData.length; i++) {
     const row = csvData[i]
     const values = Object.values(row)
 
-    const firstCol = String(values[0] || '').trim()
+    // Get all values as strings
+    const cols = values.map(v => String(v || '').trim())
+    const firstCol = cols[0]
 
     // Skip empty rows
-    if (!firstCol) continue
+    if (!firstCol) {
+      skippedCount++
+      continue
+    }
 
     // Skip summary/special rows
     if (
@@ -154,32 +195,44 @@ function parseCleanIndustry(csvData) {
       firstCol.includes('登録番号') ||
       firstCol.includes('対象') ||
       firstCol.startsWith('T1') ||
+      firstCol.startsWith('T0') ||
       firstCol === '###' ||
-      firstCol.startsWith('#')
+      firstCol.startsWith('#') ||
+      firstCol.includes('合計') ||
+      firstCol.includes('小計')
     ) {
+      console.log(`  Skipping summary row ${i}: ${firstCol}`)
+      skippedCount++
       continue
     }
 
-    // Extract columns (based on Excel: 業者名, 現場名, 月日, 完工No, 品名, 数量, 単位, 単価, 金額)
-    const vendor = values[0] || ''
-    const site = values[1] || ''
-    const date = values[2] || ''
-    const workNo = values[3] || ''
-    const item = values[4] || ''
-    const qty = values[5] || ''
-    const unit = values[6] || ''
-    const price = values[7] || ''
-    const amount = values[8] || ''
+    // Extract columns based on Clean Industry format
+    // Expected format: 業者名, 現場名, 月日, 完工No, 品名, 数量, 単位, 単価, 金額
+    const vendor = cols[0] || ''
+    const site = cols[1] || ''
+    const date = cols[2] || ''
+    const workNo = cols[3] || ''
+    const item = cols[4] || ''
+    const qty = cols[5] || ''
+    const unit = cols[6] || ''
+    const price = cols[7] || ''
+    const amount = cols[8] || ''
 
-    const itemStr = String(item).trim()
-    const amountStr = String(amount).trim()
-
-    // Must have item and amount
-    if (!itemStr || !amountStr || amountStr === '0') {
+    // Validation: Must have item name and non-zero amount
+    if (!item) {
+      console.log(`  Skipping row ${i}: No item name`)
+      skippedCount++
       continue
     }
 
-    // Create master row using helper function
+    const amountNum = cleanNumber(amount)
+    if (!amountNum || amountNum === '0') {
+      console.log(`  Skipping row ${i}: Zero or invalid amount`)
+      skippedCount++
+      continue
+    }
+
+    // Create master row
     const masterRow = createMasterRow({
       vendor: vendor,
       site: site,
@@ -194,10 +247,24 @@ function parseCleanIndustry(csvData) {
 
     results.push(masterRow)
     processedCount++
+
+    // Log first few items
+    if (processedCount <= 3) {
+      console.log(`  ✓ Row ${i}: ${item} - ¥${amount}`)
+    }
   }
 
-  console.log('=== CLEAN INDUSTRY PARSED ===')
-  console.log('Total items processed:', processedCount)
+  console.log('=== CLEAN INDUSTRY PARSING COMPLETE ===')
+  console.log(`✓ Processed: ${processedCount} items`)
+  console.log(`⊘ Skipped: ${skippedCount} rows`)
+  console.log(`Total output rows: ${results.length}`)
+
+  if (results.length === 0) {
+    throw new Error(
+      '有効なデータ行が見つかりませんでした。ファイル形式を確認してください。'
+    )
+  }
+
   return results
 }
 
@@ -205,30 +272,30 @@ function parseWithMapping(csvData, mapping) {
   const results = []
   const csvHeaders = Object.keys(csvData[0] || {})
 
-  console.log('Using standard mapping')
+  console.log('=== STANDARD MAPPING PARSER ===')
   console.log('CSV Headers:', csvHeaders)
   console.log('Expected columns:', Object.keys(mapping.map || {}))
 
-  // Check for missing columns
+  // Validate required columns
   const requiredCols = Object.keys(mapping.map || {})
   const missingCols = requiredCols.filter(col => !csvHeaders.includes(col))
 
   if (missingCols.length > 0) {
-    console.error('Missing required columns:', missingCols)
-    throw new Error(`Missing columns: ${missingCols.join(', ')}`)
+    console.error('❌ Missing required columns:', missingCols)
+    throw new Error(`必要な列が見つかりません: ${missingCols.join(', ')}`)
   }
 
-  for (const row of csvData) {
-    const firstValue = Object.values(row)[0] || ''
+  let processedCount = 0
+
+  for (let i = 0; i < csvData.length; i++) {
+    const row = csvData[i]
+    const firstValue = String(Object.values(row)[0] || '').trim()
+
+    // Skip empty rows
+    if (!firstValue) continue
 
     // Skip summary rows
-    if (
-      mapping.skipRows?.some(pattern => String(firstValue).includes(pattern))
-    ) {
-      continue
-    }
-
-    if (!firstValue.trim()) {
+    if (mapping.skipRows?.some(pattern => firstValue.includes(pattern))) {
       continue
     }
 
@@ -268,8 +335,10 @@ function parseWithMapping(csvData, mapping) {
     }
 
     results.push(masterRow)
+    processedCount++
   }
 
+  console.log(`✓ Processed ${processedCount} rows using standard mapping`)
   return results
 }
 
@@ -309,17 +378,26 @@ function formatDate(dateStr) {
   if (!dateStr) return ''
   dateStr = String(dateStr).trim()
 
+  // Already in correct format
   if (dateStr.match(/^\d{4}\/\d{1,2}\/\d{1,2}$/)) {
     return dateStr
   }
 
+  // Excel serial date
   if (!isNaN(dateStr) && dateStr.length > 4) {
     try {
       const date = new Date((parseFloat(dateStr) - 25569) * 86400 * 1000)
       return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`
     } catch (e) {
+      console.error('Date conversion error:', e)
       return dateStr
     }
+  }
+
+  // MM/DD format - assume current year
+  if (dateStr.match(/^\d{1,2}\/\d{1,2}$/)) {
+    const year = new Date().getFullYear()
+    return `${year}/${dateStr}`
   }
 
   return dateStr
@@ -327,9 +405,17 @@ function formatDate(dateStr) {
 
 function cleanNumber(numStr) {
   if (!numStr) return ''
-  return String(numStr)
+  const cleaned = String(numStr)
     .replace(/[¥,円]/g, '')
+    .replace(/\s+/g, '')
     .trim()
+
+  // Validate it's a number
+  if (cleaned && !isNaN(cleaned)) {
+    return cleaned
+  }
+
+  return ''
 }
 
 module.exports = { generateExcel }

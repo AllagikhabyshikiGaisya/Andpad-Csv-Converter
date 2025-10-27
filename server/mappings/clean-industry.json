@@ -1,0 +1,14 @@
+{
+  "vendor": "クリーン産業",
+  "filePattern": "クリーン産業",
+  "alternatePatterns": [
+    "クリーン",
+    "clean-industry",
+    "cleanindustry",
+    "clean_industry"
+  ],
+  "customParser": true,
+  "description": "Clean Industry invoice format - uses custom parser to handle complex layout",
+  "map": {},
+  "notes": "This vendor has a complex CSV format that requires custom parsing logic. The customParser flag ensures the parseCleanIndustry function is used instead of standard column mapping."
+}

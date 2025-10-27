@@ -1,11 +1,12 @@
 {
   "name": "andpad-csv-converter-server",
   "version": "1.0.0",
-  "description": "Backend for ANDPAD CSV Converter",
+  "description": "Backend API for ANDPAD CSV Converter with vendor detection and custom parsers",
   "main": "app.js",
   "scripts": {
     "start": "node app.js",
-    "dev": "nodemon app.js"
+    "dev": "nodemon app.js",
+    "test": "node test/test-converter.js"
   },
   "dependencies": {
     "express": "^4.18.2",
@@ -19,5 +20,14 @@
   },
   "engines": {
     "node": ">=18.x"
-  }
+  },
+  "keywords": [
+    "andpad",
+    "csv",
+    "converter",
+    "excel",
+    "invoice"
+  ],
+  "author": "",
+  "license": "MIT"
 }

@@ -1,7 +1,0 @@
-{
-  "vendor": "クリーン産業",
-  "filePattern": ["クリーン", "clean", "クリーン産業"],
-  "customParser": true,
-  "description": "Clean Industry invoice format",
-  "map": {}
-}
