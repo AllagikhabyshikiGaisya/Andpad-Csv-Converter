@@ -1,0 +1,12 @@
+{
+  "vendor": "エムテック",
+  "filePattern": "mtech",
+  "map": {
+    "製品": "請求納品明細名",
+    "qty": "数量",
+    "unit_price": "単価（税抜）",
+    "amount": "金額（税抜）",
+    "delivery_date": "納品実績日",
+    "client": "取引先"
+  }
+}
