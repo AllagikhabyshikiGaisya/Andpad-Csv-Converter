@@ -1,4 +1,5 @@
 const XLSX = require('xlsx')
+const { parseCleanIndustryInvoice } = require('./cleanIndustryParser')
 
 // Master ANDPAD columns in correct order
 const MASTER_COLUMNS = [
@@ -32,96 +33,92 @@ function generateExcel(csvData, mapping) {
     console.log('Vendor:', mapping.vendor)
     console.log('Input rows:', csvData.length)
 
-    // Get source columns
-    const csvHeaders = Object.keys(csvData[0] || {})
-    console.log('CSV Headers:', csvHeaders)
+    let transformedData
 
-    // Check for required columns
-    const requiredSourceColumns = Object.keys(mapping.map)
-    const missingColumns = requiredSourceColumns.filter(
-      col => !csvHeaders.includes(col)
-    )
+    // Check if this vendor needs a custom parser
+    if (mapping.vendor === 'クリーン産業') {
+      console.log('Using custom Clean Industry parser')
+      transformedData = parseCleanIndustryInvoice(csvData)
 
-    if (missingColumns.length > 0) {
-      console.log('Missing columns:', missingColumns)
-      return {
-        success: false,
-        missingColumns: missingColumns,
+      if (transformedData.length === 0) {
+        return {
+          success: false,
+          error: 'No valid line items found in Clean Industry invoice',
+        }
       }
-    }
+    } else {
+      // Standard mapping for other vendors
+      const csvHeaders = Object.keys(csvData[0] || {})
+      console.log('CSV Headers:', csvHeaders)
 
-    // Transform data to ANDPAD master format
-    const transformedData = []
-
-    for (const row of csvData) {
-      // Skip summary rows and empty rows
-      const firstValue = Object.values(row)[0] || ''
-      const shouldSkip = mapping.skipRows?.some(pattern =>
-        String(firstValue).includes(pattern)
+      const requiredSourceColumns = Object.keys(mapping.map)
+      const missingColumns = requiredSourceColumns.filter(
+        col => !csvHeaders.includes(col)
       )
 
-      if (shouldSkip || !firstValue.trim()) {
-        console.log('Skipping row:', firstValue)
-        continue
+      if (missingColumns.length > 0) {
+        console.log('Missing columns:', missingColumns)
+        return {
+          success: false,
+          missingColumns: missingColumns,
+        }
       }
 
-      // Check if this row has actual item data
-      const itemName =
-        row[
-          Object.keys(mapping.map).find(
-            key => mapping.map[key] === '請求納品明細名'
-          )
-        ]
+      // Transform data to ANDPAD master format
+      transformedData = []
 
-      if (!itemName || itemName.trim() === '') {
-        continue
-      }
+      for (const row of csvData) {
+        // Skip summary rows
+        const firstValue = Object.values(row)[0] || ''
+        const shouldSkip = mapping.skipRows?.some(pattern =>
+          String(firstValue).includes(pattern)
+        )
 
-      // Create new row with MASTER_COLUMNS structure
-      const newRow = {}
-
-      // Initialize all master columns with empty values
-      MASTER_COLUMNS.forEach(col => {
-        newRow[col] = ''
-      })
-
-      // Map source columns to master columns
-      for (const [sourceCol, targetCol] of Object.entries(mapping.map)) {
-        let value = row[sourceCol] || ''
-
-        // Clean up value
-        value = String(value).trim()
-
-        // Special handling for dates
-        if (targetCol === '納品実績日') {
-          value = formatDate(value)
+        if (shouldSkip || !firstValue.trim()) {
+          continue
         }
 
-        // Special handling for numbers
-        if (targetCol.includes('金額') || targetCol.includes('単価')) {
-          value = cleanNumber(value)
+        // Create new row with MASTER_COLUMNS structure
+        const newRow = {}
+
+        // Initialize all master columns
+        MASTER_COLUMNS.forEach(col => {
+          newRow[col] = ''
+        })
+
+        // Map source columns to master columns
+        for (const [sourceCol, targetCol] of Object.entries(mapping.map)) {
+          let value = row[sourceCol] || ''
+          value = String(value).trim()
+
+          if (targetCol === '納品実績日') {
+            value = formatDate(value)
+          }
+
+          if (targetCol.includes('金額') || targetCol.includes('単価')) {
+            value = cleanNumber(value)
+          }
+
+          newRow[targetCol] = value
         }
 
-        newRow[targetCol] = value
-      }
+        // Calculate tax-included amounts
+        if (newRow['金額（税抜）'] && !newRow['金額（税込）']) {
+          const taxExcluded = parseFloat(newRow['金額（税抜）']) || 0
+          newRow['金額（税込）'] = Math.round(taxExcluded * 1.1).toString()
+        }
 
-      // Calculate tax-included amounts if not provided
-      if (newRow['金額（税抜）'] && !newRow['金額（税込）']) {
-        const taxExcluded = parseFloat(newRow['金額（税抜）']) || 0
-        newRow['金額（税込）'] = Math.round(taxExcluded * 1.1).toString()
-      }
+        if (newRow['単価（税抜）'] && !newRow['単価（税込）']) {
+          const unitPrice = parseFloat(newRow['単価（税抜）']) || 0
+          newRow['単価（税込）'] = Math.round(unitPrice * 1.1).toString()
+        }
 
-      if (newRow['単価（税抜）'] && !newRow['単価（税込）']) {
-        const unitPrice = parseFloat(newRow['単価（税抜）']) || 0
-        newRow['単価（税込）'] = Math.round(unitPrice * 1.1).toString()
-      }
+        if (!newRow['課税フラグ']) {
+          newRow['課税フラグ'] = '課税'
+        }
 
-      // Set default tax flag
-      if (!newRow['課税フラグ']) {
-        newRow['課税フラグ'] = '課税'
+        transformedData.push(newRow)
       }
-
-      transformedData.push(newRow)
     }
 
     if (transformedData.length === 0) {
@@ -162,6 +159,7 @@ function generateExcel(csvData, mapping) {
     }
   } catch (error) {
     console.error('Excel generation error:', error)
+    console.error('Stack:', error.stack)
     return {
       success: false,
       error: error.message,
@@ -169,34 +167,32 @@ function generateExcel(csvData, mapping) {
   }
 }
 
-// Helper function to format dates
 function formatDate(dateStr) {
   if (!dateStr) return ''
 
-  // Handle various date formats
   dateStr = String(dateStr).trim()
 
-  // YYYY/M/D or YYYY/MM/DD
   if (dateStr.match(/^\d{4}\/\d{1,2}\/\d{1,2}$/)) {
     return dateStr
   }
 
-  // M/D or MM/DD (add current year)
   if (dateStr.match(/^\d{1,2}\/\d{1,2}$/)) {
     const year = new Date().getFullYear()
     return `${year}/${dateStr}`
   }
 
-  // Excel serial number
   if (!isNaN(dateStr) && dateStr.length > 4) {
-    const date = XLSX.SSF.parse_date_code(parseFloat(dateStr))
-    return `${date.y}/${date.m}/${date.d}`
+    try {
+      const date = XLSX.SSF.parse_date_code(parseFloat(dateStr))
+      return `${date.y}/${date.m}/${date.d}`
+    } catch (e) {
+      return dateStr
+    }
   }
 
   return dateStr
 }
 
-// Helper function to clean number strings
 function cleanNumber(numStr) {
   if (!numStr) return ''
   return String(numStr)
