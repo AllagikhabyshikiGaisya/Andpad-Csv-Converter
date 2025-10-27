@@ -6,33 +6,17 @@ const convertRoute = require('./routes/convert')
 const app = express()
 const PORT = process.env.PORT || 3001
 
-// CORS Configuration - MUST BE BEFORE ROUTES
-const allowedOrigins = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(',')
-  : ['*']
-
+// CORS - Must be BEFORE routes
 app.use(
   cors({
-    origin: function (origin, callback) {
-      // Allow requests with no origin (like mobile apps or curl requests)
-      if (!origin) return callback(null, true)
-
-      if (
-        allowedOrigins.indexOf('*') !== -1 ||
-        allowedOrigins.indexOf(origin) !== -1
-      ) {
-        callback(null, true)
-      } else {
-        callback(new Error('Not allowed by CORS'))
-      }
-    },
-    credentials: true,
+    origin: '*', // Allow all origins for now (we'll restrict later)
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true,
   })
 )
 
-// Middleware
+// Body parsing middleware
 app.use(express.json())
 app.use(express.urlencoded({ extended: true }))
 
@@ -41,19 +25,32 @@ app.use('/api', convertRoute)
 
 // Health check
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', message: 'ANDPAD CSV Converter API is running' })
+  res.json({
+    status: 'ok',
+    message: 'ANDPAD CSV Converter API is running',
+    timestamp: new Date().toISOString(),
+  })
 })
 
 // Root endpoint
 app.get('/', (req, res) => {
-  res.json({ message: 'ANDPAD CSV Converter API' })
+  res.json({
+    message: 'ANDPAD CSV Converter API',
+    endpoints: ['/api/health', '/api/convert'],
+  })
 })
 
-// Start server (only when not in Vercel)
-if (process.env.NODE_ENV !== 'production') {
-  app.listen(PORT, () => {
-    console.log(`🚀 Server running on http://localhost:${PORT}`)
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error('Error:', err)
+  res.status(500).json({
+    success: false,
+    message: {
+      en: 'Internal server error',
+      ja: '内部サーバーエラー',
+    },
+    error: process.env.NODE_ENV === 'development' ? err.message : undefined,
   })
-}
+})
 
 module.exports = app
