@@ -25,7 +25,6 @@ const MASTER_COLUMNS = [
   '請求納品明細備考',
   '結果',
 ]
-
 function generateExcel(csvData, mapping) {
   try {
     console.log('=== EXCEL GENERATION START ===')
@@ -40,7 +39,7 @@ function generateExcel(csvData, mapping) {
       console.log('Using custom parser for:', mapping.vendor)
       transformedData = parseWithCustomLogic(csvData, mapping.vendor)
     } else {
-      // Standard mapping
+      // Standard mapping - only enter if NOT using custom parser
       transformedData = parseWithMapping(csvData, mapping)
     }
 
@@ -87,7 +86,6 @@ function generateExcel(csvData, mapping) {
     }
   }
 }
-
 function parseWithCustomLogic(csvData, vendorName) {
   console.log('Custom parser for:', vendorName)
 
@@ -164,6 +162,13 @@ function parseCleanIndustry(csvData) {
 }
 
 function parseWithMapping(csvData, mapping) {
+  if (mapping.customParser === true) {
+    console.error(
+      'ERROR: parseWithMapping called for custom parser vendor:',
+      mapping.vendor
+    )
+    throw new Error('Should use custom parser, not standard mapping')
+  }
   const results = []
   const csvHeaders = Object.keys(csvData[0] || {})
 
