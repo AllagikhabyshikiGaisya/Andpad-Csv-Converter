@@ -7,145 +7,128 @@ const { generateExcel } = require('../utils/excelGenerator')
 
 const router = express.Router()
 
-// Configure multer
 const storage = multer.memoryStorage()
 const upload = multer({
   storage: storage,
-  limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB
-  },
-  fileFilter: (req, file, cb) => {
-    const ext = file.originalname.toLowerCase()
-    if (ext.endsWith('.csv') || ext.endsWith('.xlsx') || ext.endsWith('.xls')) {
-      cb(null, true)
-    } else {
-      cb(new Error('Only CSV and Excel files are allowed'))
-    }
-  },
+  limits: { fileSize: 10 * 1024 * 1024 },
 })
 
-router.post('/convert', upload.single('file'), async (req, res) => {
-  try {
-    console.log('=== CONVERSION REQUEST START ===')
-
-    if (!req.file) {
+router.post('/convert', (req, res) => {
+  upload.single('file')(req, res, async err => {
+    if (err) {
+      console.error('Upload error:', err)
       return res.status(400).json({
         success: false,
         message: {
-          en: 'No file uploaded.',
-          ja: 'ファイルがアップロードされていません。',
+          en: `Upload error: ${err.message}`,
+          ja: `アップロードエラー: ${err.message}`,
         },
       })
     }
 
-    console.log('File received:', req.file.originalname)
-    console.log('File size:', req.file.size)
+    try {
+      console.log('=== CONVERSION START ===')
 
-    let csvData
-    let headers
-
-    // Check file type and parse accordingly
-    if (req.file.originalname.toLowerCase().endsWith('.csv')) {
-      // Parse CSV
-      const fileContent = req.file.buffer.toString('utf-8')
-      const parseResult = Papa.parse(fileContent, {
-        header: true,
-        skipEmptyLines: true,
-        encoding: 'utf-8',
-      })
-
-      if (parseResult.errors.length > 0) {
-        console.error('CSV parse errors:', parseResult.errors)
+      if (!req.file) {
+        return res.status(400).json({
+          success: false,
+          message: {
+            en: 'No file uploaded',
+            ja: 'ファイルが選択されていません',
+          },
+        })
       }
 
-      csvData = parseResult.data
-      headers = Object.keys(csvData[0] || {})
-    } else {
-      // Parse Excel (XLSX/XLS)
-      const workbook = XLSX.read(req.file.buffer, { type: 'buffer' })
-      const firstSheet = workbook.Sheets[workbook.SheetNames[0]]
-      csvData = XLSX.utils.sheet_to_json(firstSheet, { defval: '' })
-      headers = Object.keys(csvData[0] || {})
-    }
+      console.log('File:', req.file.originalname, 'Size:', req.file.size)
 
-    console.log('Parsed rows:', csvData.length)
-    console.log('Headers:', headers)
+      let csvData, headers
 
-    if (!csvData || csvData.length === 0) {
-      return res.status(400).json({
+      // Parse file
+      if (req.file.originalname.toLowerCase().endsWith('.csv')) {
+        const content = req.file.buffer.toString('utf-8')
+        const result = Papa.parse(content, {
+          header: true,
+          skipEmptyLines: true,
+        })
+        csvData = result.data
+        headers = Object.keys(csvData[0] || {})
+      } else {
+        const workbook = XLSX.read(req.file.buffer, { type: 'buffer' })
+        const sheet = workbook.Sheets[workbook.SheetNames[0]]
+        csvData = XLSX.utils.sheet_to_json(sheet, { defval: '' })
+        headers = Object.keys(csvData[0] || {})
+      }
+
+      console.log('Rows:', csvData.length, 'Headers:', headers.slice(0, 5))
+
+      if (!csvData || csvData.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: {
+            en: 'File is empty',
+            ja: 'ファイルが空です',
+          },
+        })
+      }
+
+      // Detect vendor
+      const vendorResult = detectVendor(req.file.originalname, headers)
+
+      if (!vendorResult.detected) {
+        return res.status(400).json({
+          success: false,
+          message: {
+            en: 'Vendor not recognized. Please check filename.',
+            ja: '業者を認識できません。ファイル名を確認してください。',
+          },
+        })
+      }
+
+      console.log('Vendor:', vendorResult.mapping.vendor)
+
+      // Generate Excel
+      const result = generateExcel(csvData, vendorResult.mapping)
+
+      if (!result.success) {
+        return res.status(400).json({
+          success: false,
+          message: {
+            en: result.error || 'Conversion failed',
+            ja: result.error || '変換に失敗しました',
+          },
+        })
+      }
+
+      // Send file
+      const date = new Date()
+      const ym = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(
+        2,
+        '0'
+      )}`
+      const filename = `${ym}_${vendorResult.mapping.vendor}_ANDPAD.xlsx`
+
+      res.setHeader(
+        'Content-Type',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      )
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="${encodeURIComponent(filename)}"`
+      )
+      res.send(result.buffer)
+
+      console.log('=== SUCCESS ===', result.rowCount, 'rows')
+    } catch (error) {
+      console.error('Error:', error)
+      res.status(500).json({
         success: false,
         message: {
-          en: 'File is empty or unreadable.',
-          ja: 'ファイルが空か読み取れません。',
+          en: `Server error: ${error.message}`,
+          ja: `サーバーエラー: ${error.message}`,
         },
       })
     }
-
-    // Detect vendor
-    const vendorResult = detectVendor(req.file.originalname, headers)
-
-    if (!vendorResult.detected) {
-      return res.status(400).json({
-        success: false,
-        message: {
-          en: 'Vendor not recognized. Please check the filename or file content.',
-          ja: '業者を特定できませんでした。ファイル名またはファイル内容を確認してください。',
-        },
-      })
-    }
-
-    console.log('Vendor detected:', vendorResult.mapping.vendor)
-
-    // Generate Excel in ANDPAD format
-    const excelResult = generateExcel(csvData, vendorResult.mapping)
-
-    if (!excelResult.success) {
-      return res.status(400).json({
-        success: false,
-        message: {
-          en: `Conversion failed: ${
-            excelResult.error || excelResult.missingColumns?.join(', ')
-          }`,
-          ja: `変換に失敗しました: ${
-            excelResult.error || excelResult.missingColumns?.join(', ')
-          }`,
-        },
-      })
-    }
-
-    // Generate filename
-    const date = new Date()
-    const yearMonth = `${date.getFullYear()}${String(
-      date.getMonth() + 1
-    ).padStart(2, '0')}`
-    const filename = `${yearMonth}_${vendorResult.mapping.vendor}_ANDPAD請求書.xlsx`
-
-    console.log('Sending file:', filename)
-    console.log('Rows converted:', excelResult.rowCount)
-
-    // Send file
-    res.setHeader(
-      'Content-Type',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    )
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="${encodeURIComponent(filename)}"`
-    )
-    res.send(excelResult.buffer)
-
-    console.log('=== CONVERSION SUCCESS ===')
-  } catch (error) {
-    console.error('Conversion error:', error)
-    res.status(500).json({
-      success: false,
-      message: {
-        en: 'Internal server error during conversion.',
-        ja: '変換中に内部サーバーエラーが発生しました。',
-      },
-      error: error.message,
-    })
-  }
+  })
 })
 
 module.exports = router

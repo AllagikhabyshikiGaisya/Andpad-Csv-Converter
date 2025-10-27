@@ -1,7 +1,6 @@
 {
   "vendor": "クリーン産業",
-  "filePattern": "クリーン産業",
-  "alternatePatterns": ["クリーン", "clean"],
+  "filePattern": "クリーン",
   "customParser": true,
   "map": {}
 }
