@@ -99,68 +99,158 @@ function parseWithCustomLogic(csvData, vendorName) {
 
 function parseCleanIndustry(csvData) {
   const results = []
-  let foundDataHeader = false
+  let dataStartIndex = -1
 
-  console.log('Parsing Clean Industry invoice...')
+  console.log('=== PARSING CLEAN INDUSTRY ===')
+  console.log('Total rows:', csvData.length)
 
+  // Find where the data actually starts
+  // Look for the row with headers: 業者名, 現場名, 月日, etc.
   for (let i = 0; i < csvData.length; i++) {
     const row = csvData[i]
     const values = Object.values(row)
-    const rowText = values.join('|')
+    const rowText = values.join('|').toLowerCase()
 
-    // Look for data header
-    if (!foundDataHeader) {
-      if (rowText.includes('業者名') && rowText.includes('品名')) {
-        foundDataHeader = true
-        console.log('Found data header at row:', i)
-        continue
-      }
-      continue
-    }
-
-    // Skip empty or summary rows
-    const firstCol = values[0] || ''
+    // Look for the header row with these key columns
     if (
-      !firstCol.trim() ||
-      firstCol.includes('【') ||
-      firstCol.includes('登録番号') ||
-      firstCol.includes('請求')
+      rowText.includes('業者名') &&
+      rowText.includes('品名') &&
+      rowText.includes('単価')
     ) {
+      dataStartIndex = i + 1 // Data starts on next row
+      console.log('Found data header at row:', i)
+      console.log('Headers:', values)
+      break
+    }
+  }
+
+  if (dataStartIndex === -1) {
+    console.error('Could not find data header row')
+    return []
+  }
+
+  // Process data rows
+  for (let i = dataStartIndex; i < csvData.length; i++) {
+    const row = csvData[i]
+    const values = Object.values(row)
+
+    // Get first non-empty value to check row type
+    const firstValue = values.find(v => v && String(v).trim()) || ''
+    const firstStr = String(firstValue).trim()
+
+    console.log(`Row ${i}:`, firstStr)
+
+    // Skip empty rows
+    if (!firstStr) {
       continue
     }
 
-    // Extract data (positions based on header order)
+    // Skip summary/total rows
+    if (
+      firstStr.includes('【') ||
+      firstStr.includes('】') ||
+      firstStr.includes('現場計') ||
+      firstStr.includes('業者計') ||
+      firstStr.includes('登録番号') ||
+      firstStr.includes('10%対象') ||
+      firstStr.includes('T10132') ||
+      firstStr === '###' ||
+      firstStr.startsWith('#')
+    ) {
+      console.log('  → Skipping summary/header row')
+      continue
+    }
+
+    // Extract values based on position
+    // Based on your Excel: 業者名(0), 現場名(1), 月日(2), 完工No(3), 品名(4), 数量(5), 単位(6), 単価(7), 金額(8)
     const vendor = values[0] || ''
     const site = values[1] || ''
     const date = values[2] || ''
-    const salesNo = values[3] || ''
+    const workNo = values[3] || ''
     const item = values[4] || ''
     const qty = values[5] || ''
     const unit = values[6] || ''
     const price = values[7] || ''
     const amount = values[8] || ''
 
-    // Only add if has item name and amount
-    if (item.trim() && amount.trim() && amount !== '0') {
-      results.push(
-        createMasterRow({
-          vendor: vendor,
-          site: site,
-          date: date,
-          item: item,
-          qty: qty,
-          unit: unit,
-          price: price,
-          amount: amount,
-        })
-      )
+    // Validate: must have item name and amount
+    const itemStr = String(item).trim()
+    const amountStr = String(amount).trim()
+
+    if (!itemStr || !amountStr || amountStr === '0' || amountStr === '') {
+      console.log('  → Skipping: no item or amount')
+      continue
     }
+
+    // Clean vendor name - remove "株" suffix if present for cleaner display
+    let cleanVendor = String(vendor).trim()
+
+    // Parse date if in format like "2025/7/1"
+    let formattedDate = String(date).trim()
+    if (formattedDate && formattedDate.includes('/')) {
+      // Already in good format
+    } else if (formattedDate.match(/^\d{8}$/)) {
+      // Format YYYYMMDD to YYYY/M/D
+      const year = formattedDate.substring(0, 4)
+      const month = parseInt(formattedDate.substring(4, 6))
+      const day = parseInt(formattedDate.substring(6, 8))
+      formattedDate = `${year}/${month}/${day}`
+    }
+
+    const masterRow = {
+      請求管理ID: '',
+      取引先: cleanVendor,
+      取引設定: '',
+      '担当者（発注側）': '',
+      請求名: String(site).trim(),
+      案件管理ID: '',
+      '請求納品金額（税抜）': '',
+      '請求納品金額（税込）': '',
+      現場監督: '',
+      納品実績日: formattedDate,
+      支払予定日: '',
+      請求納品明細名: itemStr,
+      数量: String(qty).trim() || '1',
+      単位: String(unit).trim(),
+      '単価（税抜）': cleanNumber(price),
+      '単価（税込）': '',
+      '金額（税抜）': cleanNumber(amount),
+      '金額（税込）': '',
+      工事種類: '',
+      課税フラグ: '課税',
+      請求納品明細備考: String(workNo).trim(),
+      結果: '',
+    }
+
+    // Calculate tax-included amounts
+    const amountNum = parseFloat(masterRow['金額（税抜）']) || 0
+    const priceNum = parseFloat(masterRow['単価（税抜）']) || 0
+
+    if (amountNum > 0) {
+      masterRow['金額（税込）'] = Math.round(amountNum * 1.1).toString()
+    }
+
+    if (priceNum > 0) {
+      masterRow['単価（税込）'] = Math.round(priceNum * 1.1).toString()
+    }
+
+    console.log('  → Added:', itemStr, '¥' + amountStr)
+    results.push(masterRow)
   }
 
-  console.log('Clean Industry parsed items:', results.length)
+  console.log('=== CLEAN INDUSTRY PARSED ===')
+  console.log('Total items:', results.length)
   return results
 }
 
+function cleanNumber(numStr) {
+  if (!numStr) return ''
+  return String(numStr)
+    .replace(/[¥,円]/g, '')
+    .trim()
+}
+
+module.exports = { parseCleanIndustry }
 function parseWithMapping(csvData, mapping) {
   if (mapping.customParser === true) {
     console.error(
