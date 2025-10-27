@@ -37,7 +37,8 @@ function App() {
 
     const formData = new FormData()
     formData.append('file', file)
-
+    console.log('File to upload:', file.name, file.size, file.type)
+    console.log('API URL:', `${API_URL}/convert`)
     try {
       const response = await axios.post(`${API_URL}/convert`, formData, {
         headers: {
