@@ -1,0 +1,9 @@
+{
+  "vendor": "大萬",
+  "filePattern": "大萬",
+  "alternatePatterns": ["taiman", "daiman", "大萬請求書", "大萬invoice"],
+  "customParser": true,
+  "description": "Taiman invoice format - Excel file with detailed product columns",
+  "map": {},
+  "notes": "Excel invoice format with columns for dates, customer info, products, quantities, and amounts. Uses custom parser to handle the specific layout."
+}

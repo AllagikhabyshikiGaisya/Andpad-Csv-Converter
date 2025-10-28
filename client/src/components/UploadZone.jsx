@@ -4,6 +4,15 @@ function UploadZone({ onFileSelect, selectedFile }) {
   const [isDragging, setIsDragging] = useState(false)
   const fileInputRef = useRef(null)
 
+  const isValidFile = file => {
+    const fileName = file.name.toLowerCase()
+    return (
+      fileName.endsWith('.csv') ||
+      fileName.endsWith('.xlsx') ||
+      fileName.endsWith('.xls')
+    )
+  }
+
   const handleDragEnter = e => {
     e.preventDefault()
     e.stopPropagation()
@@ -29,11 +38,11 @@ function UploadZone({ onFileSelect, selectedFile }) {
     const files = e.dataTransfer.files
     if (files && files.length > 0) {
       const file = files[0]
-      if (file.name.toLowerCase().endsWith('.csv')) {
+      if (isValidFile(file)) {
         onFileSelect(file)
       } else {
         alert(
-          'Please upload a CSV file / CSVファイルをアップロードしてください'
+          'Please upload a CSV or Excel file\nCSVまたはExcelファイルをアップロードしてください'
         )
       }
     }
@@ -42,12 +51,28 @@ function UploadZone({ onFileSelect, selectedFile }) {
   const handleFileChange = e => {
     const files = e.target.files
     if (files && files.length > 0) {
-      onFileSelect(files[0])
+      const file = files[0]
+      if (isValidFile(file)) {
+        onFileSelect(file)
+      } else {
+        alert(
+          'Please upload a CSV or Excel file\nCSVまたはExcelファイルをアップロードしてください'
+        )
+      }
     }
   }
 
   const handleClick = () => {
     fileInputRef.current?.click()
+  }
+
+  const getFileIcon = () => {
+    if (!selectedFile) return '📄'
+    const fileName = selectedFile.name.toLowerCase()
+    if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
+      return '📊'
+    }
+    return '📄'
   }
 
   return (
@@ -67,12 +92,12 @@ function UploadZone({ onFileSelect, selectedFile }) {
       <input
         ref={fileInputRef}
         type="file"
-        accept=".csv"
+        accept=".csv,.xlsx,.xls,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         onChange={handleFileChange}
         className="hidden"
       />
 
-      <div className="text-5xl mb-4">📄</div>
+      <div className="text-5xl mb-4">{getFileIcon()}</div>
 
       {selectedFile ? (
         <div>
@@ -89,13 +114,16 @@ function UploadZone({ onFileSelect, selectedFile }) {
       ) : (
         <div>
           <p className="text-lg font-semibold text-black mb-2">
-            Upload CSV / CSVをアップロード
+            Upload CSV or Excel / CSV・Excelをアップロード
           </p>
           <p className="text-sm text-gray-600">
             Drag & drop or click to browse
           </p>
           <p className="text-sm text-gray-600">
             ドラッグ&ドロップまたはクリックして選択
+          </p>
+          <p className="text-xs text-gray-500 mt-3">
+            Supported: .csv, .xlsx, .xls
           </p>
         </div>
       )}

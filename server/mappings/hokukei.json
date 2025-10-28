@@ -1,0 +1,9 @@
+{
+  "vendor": "北恵株式会社",
+  "filePattern": "北恵",
+  "alternatePatterns": ["北恵株式会社", "hokukei", "ほくけい"],
+  "customParser": true,
+  "description": "Hokukei invoice format - Excel file with structured columns",
+  "map": {},
+  "notes": "Excel invoice with columns: 得意先名略称, 伝票日付, メーカー名, 品番, 品名, 数量, 単位名, 売上金額"
+}

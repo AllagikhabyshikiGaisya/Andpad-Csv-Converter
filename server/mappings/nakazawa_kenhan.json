@@ -1,0 +1,16 @@
+{
+  "vendor": "ナカザワ建販",
+  "filePattern": "ナカザワ建販",
+  "alternatePatterns": [
+    "ナカザワ",
+    "nakazawa",
+    "中沢建販",
+    "中澤建販",
+    "nakazawa_kenhan",
+    "ナカザワ建販"
+  ],
+  "customParser": true,
+  "description": "Nakazawa Kenhan invoice format - detailed product listing with multiple columns",
+  "map": {},
+  "notes": "Excel/CSV format with columns: 現場名, 担当者コード, 担当者名, 売上No, 売上行, 売上日, 備考, 区分, 区分名, メーカーコード, メーカー名, 商品コード, 商品名, 規格, 寸面1-3, 入数, 個数, 数量, 総材積, 定価, 売上材積, 売上材積単価, 売上単価, 売上単価(税込), 売上単価, 売上金額. Uses custom parser to extract and transform data."
+}

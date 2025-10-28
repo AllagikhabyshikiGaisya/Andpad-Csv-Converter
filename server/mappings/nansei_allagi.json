@@ -1,0 +1,9 @@
+{
+  "vendor": "ナンセイ",
+  "filePattern": "ナンセイ",
+  "alternatePatterns": ["nansei", "ナンセイallagi", "allagi請求書"],
+  "customParser": true,
+  "description": "Nansei ALLAGI invoice format - Excel file with detailed transaction columns",
+  "map": {},
+  "notes": "Excel invoice with columns: 請求書番号, 締日, 取引先名, 請求書名, 入金明細, 請求日付, 入金予定日, 売上金額"
+}

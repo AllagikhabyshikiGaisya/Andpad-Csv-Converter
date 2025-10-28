@@ -1,7 +1,12 @@
 {
   "vendor": "ALLAGI",
   "filePattern": "allagi",
-  "alternatePatterns": ["請求", "納品", "csv"],
+  "alternatePatterns": [
+    "allagi株式会社",
+    "allagi_invoice",
+    "allagi_納品",
+    "allagi請求"
+  ],
   "map": {
     "品名": "請求納品明細名",
     "商品名": "請求納品明細名",

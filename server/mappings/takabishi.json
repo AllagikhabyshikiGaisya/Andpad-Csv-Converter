@@ -1,0 +1,16 @@
+{
+  "vendor": "髙菱管理",
+  "filePattern": "髙菱管理",
+  "alternatePatterns": [
+    "takabishi",
+    "高菱管理",
+    "髙菱",
+    "高菱",
+    "請求データ髙菱",
+    "請求データ高菱"
+  ],
+  "customParser": true,
+  "description": "Takabishi Kanri invoice format - CSV with detailed transaction columns including branch codes, customer numbers, and delivery dates",
+  "map": {},
+  "notes": "CSV format with columns: 請求日付, 支店コード, 得意先番号, 記録先番号, 締日, 納入締日, 終了締日, etc. Uses custom parser to handle the specific layout."
+}

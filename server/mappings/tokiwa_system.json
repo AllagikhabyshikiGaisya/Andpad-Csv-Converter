@@ -1,12 +1,9 @@
 {
   "vendor": "トキワシステム",
-  "filePattern": "tokiwa",
-  "map": {
-    "品名": "請求納品明細名",
-    "個数": "数量",
-    "単価": "単価（税抜）",
-    "合計金額": "金額（税抜）",
-    "納入日": "納品実績日",
-    "得意先": "取引先"
-  }
+  "filePattern": "トキワシステム",
+  "alternatePatterns": ["tokiwa", "トキワ", "TOKIWA"],
+  "customParser": true,
+  "description": "Tokiwa System invoice format - Excel/CSV with item details, discounts, and shipping",
+  "map": {},
+  "notes": "Invoice format with columns: 品名, 数量, 単位, 単価, 金額. Includes delivery dates and location info embedded in item names."
 }

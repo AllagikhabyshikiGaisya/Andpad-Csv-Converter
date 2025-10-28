@@ -1,7 +1,15 @@
 {
   "vendor": "オメガジャパン",
-  "filePattern": "omega",
-  "alternatePatterns": ["オメガ", "ジャパン"],
+  "filePattern": "オメガジャパン",
+  "alternatePatterns": [
+    "omega",
+    "omegajapan",
+    "omega_japan",
+    "オメガ",
+    "請求計算書"
+  ],
   "customParser": true,
-  "map": {}
+  "description": "Omega Japan invoice format - CSV with date, site name, and tax-included amounts",
+  "map": {},
+  "notes": "CSV format with structure: 納品日, 現場名, 税込計(10%). Header section with company info followed by line items. Uses custom parser to handle the specific layout."
 }

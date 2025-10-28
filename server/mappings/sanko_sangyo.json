@@ -1,0 +1,9 @@
+{
+  "vendor": "三高産業",
+  "filePattern": "三高産業",
+  "alternatePatterns": ["三高", "sanko", "sankosangyo", "sanko_sangyo"],
+  "customParser": true,
+  "description": "Sanko Sangyo invoice format - uses custom parser for structured layout",
+  "map": {},
+  "notes": "This vendor has a structured CSV format with header rows that need to be skipped. Uses custom parser to extract invoice details."
+}

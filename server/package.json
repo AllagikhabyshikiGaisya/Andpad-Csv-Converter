@@ -9,11 +9,12 @@
     "test": "node test/test-converter.js"
   },
   "dependencies": {
+    "cors": "^2.8.5",
     "express": "^4.18.2",
+    "iconv-lite": "^0.7.0",
     "multer": "^2.0.0-rc.4",
     "papaparse": "^5.4.1",
-    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
-    "cors": "^2.8.5"
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"

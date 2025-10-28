@@ -39,6 +39,7 @@ function App() {
     formData.append('file', file)
     console.log('File to upload:', file.name, file.size, file.type)
     console.log('API URL:', `${API_URL}/convert`)
+
     try {
       const response = await axios.post(`${API_URL}/convert`, formData, {
         headers: {
@@ -66,10 +67,26 @@ function App() {
         type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       })
       const url = window.URL.createObjectURL(blob)
-      const filename =
-        response.headers['content-disposition']
-          ?.split('filename=')[1]
-          ?.replace(/"/g, '') || 'converted.xlsx'
+
+      // Extract filename from Content-Disposition header
+      let filename = 'converted.xlsx'
+      const contentDisposition = response.headers['content-disposition']
+
+      if (contentDisposition) {
+        // Try to get filename* (UTF-8 encoded) first
+        const filenameStarMatch = contentDisposition.match(
+          /filename\*=UTF-8''(.+?)(?:;|$)/
+        )
+        if (filenameStarMatch) {
+          filename = decodeURIComponent(filenameStarMatch[1])
+        } else {
+          // Fallback to regular filename
+          const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/)
+          if (filenameMatch) {
+            filename = filenameMatch[1]
+          }
+        }
+      }
 
       setDownloadData({ url, filename })
     } catch (error) {
@@ -152,6 +169,10 @@ function App() {
           </p>
           <div className="flex flex-wrap justify-center gap-2">
             {[
+              'ナンセイ',
+              'クリーン産業',
+              '三高産業',
+              '北恵株式会社',
               'オメガジャパン',
               'トキワシステム',
               'カネカ建材',
@@ -161,14 +182,20 @@ function App() {
               'エムテック',
               'サンリツ工業',
               'リョウエイ建材',
-            ].map(vendor => (
-              <span
-                key={vendor}
-                className="px-3 py-1 bg-gray-100 text-black text-xs rounded-full border border-gray-300"
-              >
-                {vendor}
-              </span>
-            ))}
+              'ALLAGI',
+              '大萬',
+              '髙菱管理',
+              'ナカザワ建販',
+            ]
+              .sort()
+              .map(vendor => (
+                <span
+                  key={vendor}
+                  className="px-3 py-1 bg-gray-100 text-black text-xs rounded-full border border-gray-300"
+                >
+                  {vendor}
+                </span>
+              ))}
           </div>
         </div>
       </div>
