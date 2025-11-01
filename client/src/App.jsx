@@ -1,43 +1,64 @@
 import axios from 'axios'
 import { useState } from 'react'
 import DownloadButton from './components/DownloadButton'
+import FormatSelector from './components/FormatSelector'
 import StatusMessage from './components/StatusMessage'
 import UploadZone from './components/UploadZone'
 
 function App() {
-  const [file, setFile] = useState(null)
+  const [files, setFiles] = useState([]) // Changed to array for multiple files
+  const [outputFormat, setOutputFormat] = useState('xlsx') // Phase 3: Format selection
   const [status, setStatus] = useState('idle') // idle, processing, success, error
   const [message, setMessage] = useState({ en: '', ja: '' })
   const [downloadData, setDownloadData] = useState(null)
 
   const API_URL = import.meta.env.VITE_API_URL || '/api'
 
-  const handleFileSelect = selectedFile => {
-    setFile(selectedFile)
+  const handleFileSelect = selectedFiles => {
+    // Support both single and multiple files
+    const fileArray = Array.isArray(selectedFiles)
+      ? selectedFiles
+      : [selectedFiles]
+    setFiles(fileArray)
     setStatus('idle')
     setMessage({ en: '', ja: '' })
     setDownloadData(null)
   }
 
   const handleConvert = async () => {
-    if (!file) {
+    if (!files || files.length === 0) {
       setStatus('error')
       setMessage({
-        en: 'Please select a file first.',
-        ja: 'まずファイルを選択してください。',
+        en: 'Please select at least one file.',
+        ja: '少なくとも1つのファイルを選択してください。',
       })
       return
     }
 
     setStatus('processing')
     setMessage({
-      en: 'Processing your file...',
-      ja: 'ファイルを処理中...',
+      en:
+        files.length > 1
+          ? `Processing ${files.length} files...`
+          : 'Processing your file...',
+      ja:
+        files.length > 1
+          ? `${files.length}個のファイルを処理中...`
+          : 'ファイルを処理中...',
     })
 
     const formData = new FormData()
-    formData.append('file', file)
-    console.log('File to upload:', file.name, file.size, file.type)
+
+    // Add all files
+    files.forEach(file => {
+      formData.append('files', file)
+    })
+
+    // Add output format selection
+    formData.append('outputFormat', outputFormat)
+
+    console.log('Files to upload:', files.length)
+    console.log('Output format:', outputFormat)
     console.log('API URL:', `${API_URL}/convert`)
 
     try {
@@ -48,7 +69,7 @@ function App() {
         responseType: 'blob',
       })
 
-      // Check if response is actually an error (JSON instead of blob)
+      // Check if response is actually an error
       const contentType = response.headers['content-type']
       if (contentType && contentType.includes('application/json')) {
         const text = await response.data.text()
@@ -58,29 +79,36 @@ function App() {
 
       setStatus('success')
       setMessage({
-        en: 'Conversion successful!',
-        ja: '変換に成功しました！',
+        en:
+          files.length > 1
+            ? `Successfully converted ${files.length} files!`
+            : 'Conversion successful!',
+        ja:
+          files.length > 1
+            ? `${files.length}個のファイルの変換に成功しました！`
+            : '変換に成功しました！',
       })
 
       // Prepare download
-      const blob = new Blob([response.data], {
-        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      })
+      const mimeType =
+        outputFormat === 'csv'
+          ? 'text/csv; charset=utf-8'
+          : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+
+      const blob = new Blob([response.data], { type: mimeType })
       const url = window.URL.createObjectURL(blob)
 
       // Extract filename from Content-Disposition header
-      let filename = 'converted.xlsx'
+      let filename = `converted.${outputFormat}`
       const contentDisposition = response.headers['content-disposition']
 
       if (contentDisposition) {
-        // Try to get filename* (UTF-8 encoded) first
         const filenameStarMatch = contentDisposition.match(
           /filename\*=UTF-8''(.+?)(?:;|$)/
         )
         if (filenameStarMatch) {
           filename = decodeURIComponent(filenameStarMatch[1])
         } else {
-          // Fallback to regular filename
           const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/)
           if (filenameMatch) {
             filename = filenameMatch[1]
@@ -93,7 +121,6 @@ function App() {
       setStatus('error')
 
       if (error.response && error.response.data) {
-        // Try to parse error message
         try {
           const text = await error.response.data.text()
           const errorData = JSON.parse(text)
@@ -124,18 +151,33 @@ function App() {
           <p className="text-lg text-gray-700">
             ANDPADインポート用CSVコンバーター
           </p>
+          {/* Phase 3 Badge */}
+          <div className="mt-2 inline-flex items-center gap-2">
+            <span className="px-3 py-1 bg-blue-100 text-blue-800 text-xs font-semibold rounded-full">
+              ✨ Multi-file Support
+            </span>
+            <span className="px-3 py-1 bg-green-100 text-green-800 text-xs font-semibold rounded-full">
+              📤 Excel & CSV Export
+            </span>
+          </div>
         </div>
 
         {/* Main Card */}
         <div className="bg-white border-2 border-black rounded-lg p-8 shadow-lg">
-          <UploadZone onFileSelect={handleFileSelect} selectedFile={file} />
+          <UploadZone onFileSelect={handleFileSelect} selectedFiles={files} />
+
+          {/* Phase 3: Format Selector */}
+          <FormatSelector
+            selectedFormat={outputFormat}
+            onFormatChange={setOutputFormat}
+          />
 
           <button
             onClick={handleConvert}
-            disabled={!file || status === 'processing'}
+            disabled={files.length === 0 || status === 'processing'}
             className={`w-full mt-6 py-3 px-6 rounded-lg font-semibold text-lg transition-all duration-200
               ${
-                !file || status === 'processing'
+                files.length === 0 || status === 'processing'
                   ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
                   : 'bg-black text-white hover:bg-gray-800 active:scale-95'
               }`}
@@ -146,7 +188,11 @@ function App() {
                 Processing / 処理中...
               </>
             ) : (
-              <>Convert / 変換する</>
+              <>
+                {files.length > 1
+                  ? `Convert ${files.length} Files / ${files.length}個のファイルを変換`
+                  : 'Convert / 変換する'}
+              </>
             )}
           </button>
 
@@ -175,13 +221,6 @@ function App() {
               '北恵株式会社',
               'オメガジャパン',
               'トキワシステム',
-              'カネカ建材',
-              'ミヤコ電設',
-              'ナカジマ設備',
-              'ハタケヤマ商会',
-              'エムテック',
-              'サンリツ工業',
-              'リョウエイ建材',
               'ALLAGI',
               '大萬',
               '髙菱管理',

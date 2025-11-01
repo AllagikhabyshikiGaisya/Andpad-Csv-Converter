@@ -4,27 +4,30 @@ const Papa = require('papaparse')
 const XLSX = require('xlsx')
 const iconv = require('iconv-lite')
 const { detectVendor } = require('../utils/vendorDetector')
-const { generateExcel } = require('../utils/excelGenerator')
+const {
+  generateExcel,
+  generateCombinedExcel,
+} = require('../utils/excelGenerator')
 
 const router = express.Router()
 
-// Configure multer for file uploads with proper encoding
+// Configure multer for MULTIPLE file uploads
 const storage = multer.memoryStorage()
 const upload = multer({
   storage: storage,
   limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB limit
+    fileSize: 10 * 1024 * 1024, // 10MB limit per file
+    files: 10, // Max 10 files at once
   },
   fileFilter: (req, file, cb) => {
     console.log('File filter - Original name:', file.originalname)
     console.log('File filter - MIME type:', file.mimetype)
 
-    // Fix filename encoding issues for display purposes only
+    // Fix filename encoding issues
     if (file.originalname) {
       try {
         const buffer = Buffer.from(file.originalname, 'latin1')
         const fixed = buffer.toString('utf8')
-        // Only apply fix if it results in valid Japanese characters
         if (/[ぁ-ん]|[ァ-ヶ]|[一-龯]/.test(fixed)) {
           file.originalname = fixed
           console.log('Fixed filename:', file.originalname)
@@ -73,10 +76,7 @@ function decodeCSV(buffer) {
 
   console.log('Attempting to detect CSV encoding...')
 
-  // Try UTF-8 first
   let content = buffer.toString('utf-8')
-
-  // Check for mojibake indicators
   const hasMojibake =
     content.includes('�') ||
     (content.includes('ã') && content.includes('â') && content.includes('¯'))
@@ -88,12 +88,9 @@ function decodeCSV(buffer) {
 
   console.log('⚠️ Mojibake detected in UTF-8, trying other encodings...')
 
-  // Try other encodings
   for (const encoding of encodings.slice(1)) {
     try {
       const decoded = iconv.decode(buffer, encoding)
-
-      // Check if decoded content looks valid (has common Japanese characters)
       const hasValidJapanese = /[あ-ん]|[ア-ン]|[一-龯]/.test(decoded)
       const noMojibake = !decoded.includes('�')
 
@@ -106,7 +103,6 @@ function decodeCSV(buffer) {
     }
   }
 
-  // Fallback to Shift-JIS (most common for Japanese Windows)
   console.log('⚠️ Using Shift-JIS as fallback')
   try {
     return iconv.decode(buffer, 'shift-jis')
@@ -116,180 +112,256 @@ function decodeCSV(buffer) {
   }
 }
 
-router.post('/convert', upload.single('file'), async (req, res) => {
+// Helper function to parse a single file
+async function parseFile(file) {
+  let filename = file.originalname
+  const fileBuffer = file.buffer
+
+  // Fix filename encoding
+  if (
+    filename.includes('ã') ||
+    filename.includes('¯') ||
+    filename.includes('â')
+  ) {
+    try {
+      const buffer = Buffer.from(filename, 'latin1')
+      const fixed = buffer.toString('utf8')
+      if (
+        fixed.includes('ク') ||
+        fixed.includes('産') ||
+        fixed.includes('請')
+      ) {
+        filename = fixed
+      }
+    } catch (e) {
+      // Ignore
+    }
+  }
+
+  console.log('Parsing file:', filename)
+
+  let csvData = []
+  let headers = []
+
+  if (filename.toLowerCase().endsWith('.csv')) {
+    const fileContent = decodeCSV(fileBuffer)
+    const parseResult = Papa.parse(fileContent, {
+      header: true,
+      skipEmptyLines: true,
+      dynamicTyping: false,
+    })
+
+    if (parseResult.errors.length > 0) {
+      console.error('CSV parsing errors:', parseResult.errors)
+    }
+
+    csvData = parseResult.data
+    headers = parseResult.meta.fields || []
+    console.log('✓ CSV parsed:', csvData.length, 'rows')
+  } else if (
+    filename.toLowerCase().endsWith('.xlsx') ||
+    filename.toLowerCase().endsWith('.xls')
+  ) {
+    const workbook = XLSX.read(fileBuffer, {
+      type: 'buffer',
+      cellDates: true,
+      cellNF: false,
+      cellText: false,
+    })
+
+    const sheetName = workbook.SheetNames[0]
+    const worksheet = workbook.Sheets[sheetName]
+
+    csvData = XLSX.utils.sheet_to_json(worksheet, {
+      header: 1,
+      defval: '',
+      raw: false,
+      dateNF: 'yyyy/mm/dd',
+    })
+
+    if (csvData.length > 0) {
+      headers = csvData[0]
+      csvData = csvData.slice(1).map(row => {
+        const obj = {}
+        headers.forEach((header, index) => {
+          obj[header] = row[index] || ''
+        })
+        return obj
+      })
+    }
+    console.log('✓ Excel parsed:', csvData.length, 'rows')
+  }
+
+  return { filename, csvData, headers }
+}
+
+// Main conversion route - supports SINGLE or MULTIPLE files
+router.post('/convert', upload.array('files', 10), async (req, res) => {
   console.log('\n=== NEW CONVERSION REQUEST ===')
   console.log('Timestamp:', new Date().toISOString())
 
   try {
-    if (!req.file) {
-      console.error('❌ No file uploaded')
+    // Check if files were uploaded
+    const files = req.files || (req.file ? [req.file] : [])
+
+    if (!files || files.length === 0) {
+      console.error('❌ No files uploaded')
       return res.status(400).json({
         success: false,
         message: {
-          en: 'No file uploaded',
+          en: 'No files uploaded',
           ja: 'ファイルがアップロードされていません',
         },
       })
     }
 
-    let filename = req.file.originalname
-    const fileBuffer = req.file.buffer
-    const fileSize = req.file.size
+    // Get output format from request body (default: xlsx)
+    const outputFormat = req.body.outputFormat || 'xlsx'
+    console.log('Output format:', outputFormat)
+    console.log('Number of files:', files.length)
 
-    // Additional filename encoding fix
-    if (
-      filename.includes('ã') ||
-      filename.includes('¯') ||
-      filename.includes('â')
-    ) {
-      console.log('⚠️ Detected garbled filename, attempting to fix...')
-      try {
-        const buffer = Buffer.from(filename, 'latin1')
-        const fixed = buffer.toString('utf8')
-        if (
-          fixed.includes('ク') ||
-          fixed.includes('産') ||
-          fixed.includes('請')
-        ) {
-          filename = fixed
-          console.log('✓ Fixed filename:', filename)
-        }
-      } catch (e) {
-        console.log('Could not fix filename encoding')
-      }
-    }
+    // SINGLE FILE PROCESSING
+    if (files.length === 1) {
+      console.log('\n--- SINGLE FILE MODE ---')
+      const file = files[0]
 
-    console.log('File received:', filename)
-    console.log('File size:', fileSize, 'bytes')
-    console.log('MIME type:', req.file.mimetype)
+      const { filename, csvData, headers } = await parseFile(file)
 
-    let csvData = []
-    let headers = []
-
-    if (filename.toLowerCase().endsWith('.csv')) {
-      console.log('Processing as CSV file...')
-
-      // Decode with proper encoding detection
-      const fileContent = decodeCSV(fileBuffer)
-
-      console.log('File content length:', fileContent.length)
-      console.log('First 200 chars:', fileContent.substring(0, 200))
-
-      const parseResult = Papa.parse(fileContent, {
-        header: true,
-        skipEmptyLines: true,
-        dynamicTyping: false,
-      })
-
-      if (parseResult.errors.length > 0) {
-        console.error('CSV parsing errors:', parseResult.errors)
-      }
-
-      csvData = parseResult.data
-      headers = parseResult.meta.fields || []
-
-      console.log('✓ CSV parsed successfully')
-      console.log('Total rows:', csvData.length)
-      console.log('Headers:', headers)
-    } else if (
-      filename.toLowerCase().endsWith('.xlsx') ||
-      filename.toLowerCase().endsWith('.xls')
-    ) {
-      console.log('Processing as Excel file...')
-
-      const workbook = XLSX.read(fileBuffer, {
-        type: 'buffer',
-        cellDates: true,
-        cellNF: false,
-        cellText: false,
-      })
-
-      const sheetName = workbook.SheetNames[0]
-      const worksheet = workbook.Sheets[sheetName]
-
-      console.log('✓ Excel parsed successfully')
-      console.log('Sheet name:', sheetName)
-
-      // Convert to JSON with all data
-      csvData = XLSX.utils.sheet_to_json(worksheet, {
-        header: 1,
-        defval: '',
-        raw: false,
-        dateNF: 'yyyy/mm/dd',
-      })
-
-      console.log('Total rows (including header):', csvData.length)
-
-      if (csvData.length > 0) {
-        headers = csvData[0]
-
-        // Convert array format to object format
-        csvData = csvData.slice(1).map(row => {
-          const obj = {}
-          headers.forEach((header, index) => {
-            obj[header] = row[index] || ''
-          })
-          return obj
+      if (!csvData || csvData.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: {
+            en: 'File is empty or invalid',
+            ja: 'ファイルが空か無効です',
+          },
         })
-
-        console.log('Data rows after header removal:', csvData.length)
       }
 
-      console.log('Headers:', headers)
-    } else {
-      console.error('❌ Unsupported file type')
+      console.log('Sample data:', JSON.stringify(csvData[0], null, 2))
+
+      // Detect vendor
+      const detection = detectVendor(filename, headers)
+
+      if (!detection.detected) {
+        console.error('❌ Vendor detection failed')
+        return res.status(400).json({
+          success: false,
+          message: {
+            en: 'Could not identify vendor',
+            ja: '業者を識別できませんでした',
+          },
+          details: {
+            filename: filename,
+            headersSample: headers.slice(0, 5),
+          },
+        })
+      }
+
+      console.log('✓ Vendor:', detection.mapping.vendor)
+
+      // Generate Excel/CSV
+      const result = generateExcel(csvData, detection.mapping, outputFormat)
+
+      if (!result.success) {
+        console.error('❌ Generation failed:', result.error)
+        return res.status(400).json({
+          success: false,
+          message: {
+            en: `Generation failed: ${result.error}`,
+            ja: `生成失敗: ${result.error}`,
+          },
+        })
+      }
+
+      console.log('✓ File generated successfully')
+      console.log('Output rows:', result.rowCount)
+
+      // Send file
+      const outputFilename = `ANDPAD_${
+        detection.mapping.vendor
+      }_${Date.now()}.${result.fileExtension}`
+      const encodedFilename = encodeURIComponent(outputFilename)
+      const asciiSafeFilename = outputFilename.replace(/[^\x00-\x7F]/g, '_')
+
+      const contentType =
+        result.fileExtension === 'csv'
+          ? 'text/csv; charset=utf-8'
+          : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+
+      res.setHeader('Content-Type', contentType)
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="${asciiSafeFilename}"; filename*=UTF-8''${encodedFilename}`
+      )
+      res.setHeader('X-Vendor', encodeURIComponent(detection.mapping.vendor))
+      res.setHeader('X-Row-Count', result.rowCount)
+
+      console.log('Sending file:', outputFilename)
+      console.log('=== CONVERSION COMPLETED ===\n')
+
+      return res.send(result.buffer)
+    }
+
+    // MULTIPLE FILES PROCESSING (BATCH MODE)
+    console.log('\n--- BATCH MODE: Processing', files.length, 'files ---')
+
+    const filesData = []
+
+    // Parse all files
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i]
+      console.log(
+        `\n[${i + 1}/${files.length}] Processing: ${file.originalname}`
+      )
+
+      try {
+        const { filename, csvData, headers } = await parseFile(file)
+
+        if (!csvData || csvData.length === 0) {
+          console.warn(`⚠️ Skipping empty file: ${filename}`)
+          continue
+        }
+
+        // Detect vendor
+        const detection = detectVendor(filename, headers)
+
+        if (!detection.detected) {
+          console.warn(`⚠️ Could not detect vendor for: ${filename}`)
+          continue
+        }
+
+        console.log(`✓ Detected: ${detection.mapping.vendor}`)
+
+        filesData.push({
+          csvData: csvData,
+          mapping: detection.mapping,
+        })
+      } catch (error) {
+        console.error(
+          `❌ Error processing ${file.originalname}:`,
+          error.message
+        )
+        continue
+      }
+    }
+
+    if (filesData.length === 0) {
       return res.status(400).json({
         success: false,
         message: {
-          en: 'Unsupported file type',
-          ja: 'サポートされていないファイル形式です',
+          en: 'No valid files could be processed',
+          ja: '有効なファイルが処理できませんでした',
         },
       })
     }
 
-    if (!csvData || csvData.length === 0) {
-      console.error('❌ No data found in file')
-      return res.status(400).json({
-        success: false,
-        message: {
-          en: 'File is empty or invalid',
-          ja: 'ファイルが空か無効です',
-        },
-      })
-    }
+    console.log(`\n✓ Successfully parsed ${filesData.length} files`)
 
-    console.log('Sample data (first row):', JSON.stringify(csvData[0], null, 2))
-
-    console.log('\n--- Starting Vendor Detection ---')
-    const detection = detectVendor(filename, headers)
-
-    if (!detection.detected) {
-      console.error('❌ Vendor detection failed')
-      console.error('Reason:', detection.error)
-
-      return res.status(400).json({
-        success: false,
-        message: {
-          en: 'Could not identify vendor. Please check filename or file format.',
-          ja: '業者を識別できませんでした。ファイル名またはファイル形式を確認してください。',
-        },
-        details: {
-          filename: filename,
-          headersSample: headers.slice(0, 5),
-        },
-      })
-    }
-
-    console.log('✓✓✓ Vendor detected:', detection.mapping.vendor)
-    console.log('Detection method:', detection.method)
-    console.log('Custom parser:', detection.mapping.customParser)
-
-    console.log('\n--- Starting Excel Generation ---')
-    const result = generateExcel(csvData, detection.mapping)
+    // Generate combined file
+    const result = generateCombinedExcel(filesData, outputFormat)
 
     if (!result.success) {
-      console.error('❌ Excel generation failed:', result.error)
-
+      console.error('❌ Combined generation failed:', result.error)
       return res.status(400).json({
         success: false,
         message: {
@@ -299,31 +371,34 @@ router.post('/convert', upload.single('file'), async (req, res) => {
       })
     }
 
-    console.log('✓✓✓ Excel generated successfully')
-    console.log('Output rows:', result.rowCount)
+    console.log('✓ Combined file generated successfully')
+    console.log('Total rows:', result.rowCount)
+    console.log('Vendors processed:', result.vendorCount)
 
-    const outputFilename = `ANDPAD_${
-      detection.mapping.vendor
-    }_${Date.now()}.xlsx`
-
+    // Send combined file
+    const outputFilename = `ANDPAD_Combined_${Date.now()}.${
+      result.fileExtension
+    }`
     const encodedFilename = encodeURIComponent(outputFilename)
     const asciiSafeFilename = outputFilename.replace(/[^\x00-\x7F]/g, '_')
 
-    res.setHeader(
-      'Content-Type',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    )
+    const contentType =
+      result.fileExtension === 'csv'
+        ? 'text/csv; charset=utf-8'
+        : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+
+    res.setHeader('Content-Type', contentType)
     res.setHeader(
       'Content-Disposition',
       `attachment; filename="${asciiSafeFilename}"; filename*=UTF-8''${encodedFilename}`
     )
-    res.setHeader('X-Vendor', encodeURIComponent(detection.mapping.vendor))
+    res.setHeader('X-Vendor-Count', result.vendorCount)
     res.setHeader('X-Row-Count', result.rowCount)
 
-    console.log('Sending file:', outputFilename)
-    console.log('=== CONVERSION COMPLETED SUCCESSFULLY ===\n')
+    console.log('Sending combined file:', outputFilename)
+    console.log('=== BATCH CONVERSION COMPLETED ===\n')
 
-    res.send(result.buffer)
+    return res.send(result.buffer)
   } catch (error) {
     console.error('❌ CONVERSION ERROR:', error.message)
     console.error('Stack trace:', error.stack)

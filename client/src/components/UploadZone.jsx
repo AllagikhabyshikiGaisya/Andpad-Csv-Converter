@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 
-function UploadZone({ onFileSelect, selectedFile }) {
+function UploadZone({ onFileSelect, selectedFiles }) {
   const [isDragging, setIsDragging] = useState(false)
   const fileInputRef = useRef(null)
 
@@ -35,30 +35,28 @@ function UploadZone({ onFileSelect, selectedFile }) {
     e.stopPropagation()
     setIsDragging(false)
 
-    const files = e.dataTransfer.files
-    if (files && files.length > 0) {
-      const file = files[0]
-      if (isValidFile(file)) {
-        onFileSelect(file)
-      } else {
-        alert(
-          'Please upload a CSV or Excel file\nCSVまたはExcelファイルをアップロードしてください'
-        )
-      }
+    const files = Array.from(e.dataTransfer.files)
+    const validFiles = files.filter(isValidFile)
+
+    if (validFiles.length > 0) {
+      onFileSelect(validFiles)
+    } else {
+      alert(
+        'Please upload CSV or Excel files only\nCSVまたはExcelファイルのみをアップロードしてください'
+      )
     }
   }
 
   const handleFileChange = e => {
-    const files = e.target.files
-    if (files && files.length > 0) {
-      const file = files[0]
-      if (isValidFile(file)) {
-        onFileSelect(file)
-      } else {
-        alert(
-          'Please upload a CSV or Excel file\nCSVまたはExcelファイルをアップロードしてください'
-        )
-      }
+    const files = Array.from(e.target.files)
+    const validFiles = files.filter(isValidFile)
+
+    if (validFiles.length > 0) {
+      onFileSelect(validFiles)
+    } else {
+      alert(
+        'Please upload CSV or Excel files only\nCSVまたはExcelファイルのみをアップロードしてください'
+      )
     }
   }
 
@@ -67,12 +65,19 @@ function UploadZone({ onFileSelect, selectedFile }) {
   }
 
   const getFileIcon = () => {
-    if (!selectedFile) return '📄'
-    const fileName = selectedFile.name.toLowerCase()
+    if (!selectedFiles || selectedFiles.length === 0) return '📄'
+    if (selectedFiles.length > 1) return '📚'
+
+    const fileName = selectedFiles[0].name.toLowerCase()
     if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
       return '📊'
     }
     return '📄'
+  }
+
+  const getTotalSize = () => {
+    if (!selectedFiles || selectedFiles.length === 0) return 0
+    return selectedFiles.reduce((sum, file) => sum + file.size, 0)
   }
 
   return (
@@ -94,21 +99,43 @@ function UploadZone({ onFileSelect, selectedFile }) {
         type="file"
         accept=".csv,.xlsx,.xls,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         onChange={handleFileChange}
+        multiple // Phase 3: Enable multiple file selection
         className="hidden"
       />
 
       <div className="text-5xl mb-4">{getFileIcon()}</div>
 
-      {selectedFile ? (
+      {selectedFiles && selectedFiles.length > 0 ? (
         <div>
-          <p className="text-lg font-semibold text-black mb-1">
-            {selectedFile.name}
-          </p>
-          <p className="text-sm text-gray-600">
-            {(selectedFile.size / 1024).toFixed(2)} KB
-          </p>
-          <p className="text-xs text-gray-500 mt-2">
-            Click to change file / クリックして変更
+          {selectedFiles.length === 1 ? (
+            <>
+              <p className="text-lg font-semibold text-black mb-1">
+                {selectedFiles[0].name}
+              </p>
+              <p className="text-sm text-gray-600">
+                {(selectedFiles[0].size / 1024).toFixed(2)} KB
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-lg font-semibold text-black mb-2">
+                {selectedFiles.length} Files Selected
+              </p>
+              <div className="max-h-32 overflow-y-auto mb-2">
+                {selectedFiles.map((file, index) => (
+                  <p key={index} className="text-sm text-gray-600 truncate">
+                    {index + 1}. {file.name} ({(file.size / 1024).toFixed(1)}{' '}
+                    KB)
+                  </p>
+                ))}
+              </div>
+              <p className="text-sm font-semibold text-gray-700">
+                Total: {(getTotalSize() / 1024).toFixed(2)} KB
+              </p>
+            </>
+          )}
+          <p className="text-xs text-gray-500 mt-3">
+            Click to change files / クリックして変更
           </p>
         </div>
       ) : (
@@ -122,7 +149,10 @@ function UploadZone({ onFileSelect, selectedFile }) {
           <p className="text-sm text-gray-600">
             ドラッグ&ドロップまたはクリックして選択
           </p>
-          <p className="text-xs text-gray-500 mt-3">
+          <p className="text-xs text-blue-600 font-semibold mt-3">
+            ✨ Multiple files supported! / 複数ファイル対応！
+          </p>
+          <p className="text-xs text-gray-500 mt-1">
             Supported: .csv, .xlsx, .xls
           </p>
         </div>
