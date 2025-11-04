@@ -42,6 +42,8 @@ class HokukeiParser extends BaseParser {
         amount: cleanAmount,
         workNo: row['品番'] || '',
         remarks: row['メーカー名'] || '',
+        projectId: '', // Let system generate
+        result: '承認',
       })
 
       results.push(masterRow)

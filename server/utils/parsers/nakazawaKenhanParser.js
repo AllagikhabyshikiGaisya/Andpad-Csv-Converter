@@ -76,6 +76,8 @@ class NakazawaKenhanParser extends BaseParser {
         amount: cleanAmount,
         workNo: productCode || row['売上Ｎｏ'] || '',
         remarks: remarksParts.join(' '),
+        projectId: '', // Let system generate
+        result: '承認',
       })
 
       results.push(masterRow)

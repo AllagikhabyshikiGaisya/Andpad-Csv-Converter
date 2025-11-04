@@ -47,6 +47,8 @@ class SankoSangyoParser extends BaseParser {
         amount: amount,
         workNo: values[1] || '',
         remarks: values[2] || '',
+        projectId: '', // Let system generate
+        result: '承認',
       })
 
       results.push(masterRow)

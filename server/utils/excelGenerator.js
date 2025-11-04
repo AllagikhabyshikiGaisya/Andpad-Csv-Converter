@@ -8,6 +8,7 @@ const {
   cleanNumber,
   addInvoiceTotalsToRows,
   applyVendorSpecificRules,
+  resetSequenceCounter,
 } = require('./excelUtils')
 const { getParser, hasCustomParser } = require('./parsers')
 
@@ -21,6 +22,9 @@ function generateExcel(csvData, mapping, outputFormat = 'xlsx') {
     console.log('Output format:', outputFormat)
     console.log('Has custom parser:', mapping.customParser)
     console.log('Input rows:', csvData.length)
+
+    // Reset sequence counter for each file
+    resetSequenceCounter()
 
     let transformedData = []
 
@@ -43,7 +47,7 @@ function generateExcel(csvData, mapping, outputFormat = 'xlsx') {
 
     console.log('✓ Transformed rows:', transformedData.length)
 
-    // CRITICAL: Add invoice totals to ALL rows
+    // CRITICAL: Add invoice totals per vendor group
     transformedData = addInvoiceTotalsToRows(transformedData)
 
     // Apply vendor-specific rules (e.g., 大萬 1% discount)
@@ -170,6 +174,8 @@ function parseWithMapping(csvData, mapping) {
   return results
 }
 
+// Create Excel with merged cells for same vendor IDs
+// Create Excel with merged cells for duplicate values in specific columns
 function createExcelWorkbook(transformedData) {
   const workbook = XLSX.utils.book_new()
 
@@ -179,13 +185,66 @@ function createExcelWorkbook(transformedData) {
 
   setColumnWidths(worksheet, MASTER_COLUMNS)
 
+  worksheet['!merges'] = []
+
+  // CRITICAL: Merge cells for columns that have duplicate consecutive values
+  // Columns to merge: 取引先 (B), 請求名 (E), 請求納品明細名 (L)
+  const columnsToMerge = [
+    { col: 1, name: '取引先' }, // Column B
+    { col: 4, name: '請求名' }, // Column E
+    { col: 11, name: '請求納品明細名' }, // Column L
+  ]
+
+  columnsToMerge.forEach(({ col, name }) => {
+    let currentValue = null
+    let startRow = 1 // Start from row 1 (after header row 0)
+
+    for (let i = 0; i < transformedData.length; i++) {
+      const cellValue = transformedData[i][name]
+
+      if (cellValue !== currentValue) {
+        // New value found, merge previous cells if needed
+        if (currentValue !== null && i > startRow) {
+          worksheet['!merges'].push({
+            s: { r: startRow, c: col }, // Start row, column
+            e: { r: i, c: col }, // End row, column
+          })
+        }
+        currentValue = cellValue
+        startRow = i + 1 // +1 because row 0 is header
+      }
+    }
+
+    // Merge the last group
+    if (transformedData.length > startRow) {
+      worksheet['!merges'].push({
+        s: { r: startRow, c: col },
+        e: { r: transformedData.length, c: col },
+      })
+    }
+  })
+
+  // Center align merged cells for all merged columns
+  columnsToMerge.forEach(({ col }) => {
+    for (let i = 1; i <= transformedData.length; i++) {
+      const cellRef = XLSX.utils.encode_cell({ r: i, c: col })
+      if (!worksheet[cellRef]) continue
+
+      worksheet[cellRef].s = {
+        alignment: {
+          vertical: 'center',
+          horizontal: 'center',
+        },
+      }
+    }
+  })
+
   XLSX.utils.book_append_sheet(workbook, worksheet, 'ANDPAD Import')
 
   const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' })
 
   return buffer
 }
-
 function createCSVFile(transformedData) {
   const csv = Papa.unparse(transformedData, {
     columns: MASTER_COLUMNS,
@@ -207,6 +266,9 @@ function generateCombinedExcel(filesData, outputFormat = 'xlsx') {
     console.log('Number of files:', filesData.length)
     console.log('Output format:', outputFormat)
 
+    // Reset sequence counter for batch processing
+    resetSequenceCounter()
+
     const allTransformedData = []
     const vendorCounts = {}
 
@@ -224,15 +286,6 @@ function generateCombinedExcel(filesData, outputFormat = 'xlsx') {
       }
 
       if (transformedData && transformedData.length > 0) {
-        // CRITICAL: Add invoice totals for THIS vendor's data
-        transformedData = addInvoiceTotalsToRows(transformedData)
-
-        // Apply vendor-specific rules
-        transformedData = applyVendorSpecificRules(
-          transformedData,
-          mapping.vendor
-        )
-
         const vendorName = mapping.vendor
         vendorCounts[vendorName] =
           (vendorCounts[vendorName] || 0) + transformedData.length
@@ -247,6 +300,38 @@ function generateCombinedExcel(filesData, outputFormat = 'xlsx') {
     }
 
     console.log(`\n✓ Total combined rows: ${allTransformedData.length}`)
+
+    // CRITICAL: Group by vendor and add totals per vendor
+    allTransformedData = addInvoiceTotalsToRows(allTransformedData)
+
+    // Apply vendor-specific rules for each vendor in the combined file
+    const processedVendors = new Set()
+    allTransformedData = allTransformedData.map(row => {
+      const vendorId = row['取引先']
+
+      // Find vendor name from system ID
+      let vendorName = null
+      for (const [name, id] of Object.entries(
+        require('./excelUtils').VENDOR_SYSTEM_IDS
+      )) {
+        if (id === vendorId) {
+          vendorName = name
+          break
+        }
+      }
+
+      // Apply vendor-specific rules once per vendor
+      if (vendorName && !processedVendors.has(vendorName)) {
+        processedVendors.add(vendorName)
+        const vendorRows = allTransformedData.filter(
+          r => r['取引先'] === vendorId
+        )
+        applyVendorSpecificRules(vendorRows, vendorName)
+      }
+
+      return row
+    })
+
     console.log('✓ Vendors processed:', Object.keys(vendorCounts).join(', '))
 
     // Generate file based on format
@@ -260,7 +345,7 @@ function generateCombinedExcel(filesData, outputFormat = 'xlsx') {
     } else {
       buffer = createExcelWorkbook(allTransformedData)
       fileExtension = 'xlsx'
-      console.log('✓ Combined Excel file generated')
+      console.log('✓ Combined Excel file generated WITH MERGED CELLS')
     }
 
     console.log('=== COMBINED FILE GENERATION SUCCESS ===')

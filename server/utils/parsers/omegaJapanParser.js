@@ -294,6 +294,8 @@ class OmegaJapanParser extends BaseParser {
         amount: taxExcluded.toString(),
         workNo: '',
         remarks: deliveryDate.includes('追加') ? '追加工事' : '',
+        projectId: '', // Let system generate
+        result: '承認',
       })
 
       masterRow['金額(税込)'] = cleanAmount

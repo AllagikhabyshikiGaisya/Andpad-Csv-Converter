@@ -43,6 +43,8 @@ class TaimanParser extends BaseParser {
         amount: cleanAmount,
         workNo: row['商品コード'] || '',
         remarks: row['備考'] || '',
+        projectId: '', // Let system generate
+        result: '承認',
       })
 
       results.push(masterRow)

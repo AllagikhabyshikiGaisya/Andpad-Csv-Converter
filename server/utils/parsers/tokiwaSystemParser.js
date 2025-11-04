@@ -115,6 +115,8 @@ class TokiwaSystemParser extends BaseParser {
         amount: cleanAmount,
         workNo: '',
         remarks: '',
+        projectId: '', // Let system generate
+        result: '承認',
       })
 
       results.push(masterRow)

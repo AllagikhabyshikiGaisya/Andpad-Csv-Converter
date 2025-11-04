@@ -40,6 +40,8 @@ class NanseiParser extends BaseParser {
         amount: cleanAmount,
         workNo: row['請求番号'] || '',
         remarks: row['取引先CD'] || '',
+        projectId: '', // Let system generate
+        result: '承認',
       })
 
       results.push(masterRow)
