@@ -139,6 +139,7 @@ class CleanIndustryParser extends BaseParser {
         continue
       }
 
+      // FIXED: Use actual quantity from source data
       const cleanQty = cleanNumber(quantity) || '1'
       const cleanUnitPrice = cleanNumber(unitPrice)
 
@@ -161,12 +162,15 @@ class CleanIndustryParser extends BaseParser {
           ? metadata.invoiceDate.split('/')[0]
           : new Date().getFullYear()
         formattedDate = `${year}/${parts[0]}/${parts[1]}`
+      } else if (dateStr && dateStr.match(/^\d{4}\/\d{1,2}\/\d{1,2}$/)) {
+        // Already in correct format
+        formattedDate = dateStr
       } else {
         formattedDate = formatDate(dateStr) || metadata.invoiceDate
       }
 
       console.log(
-        `✓ Processing row ${i}: Site="${siteName}" Item="${itemName}" SalesNo="${salesNo}" - ${cleanQty}${unit} × ¥${finalUnitPrice} = ¥${cleanAmount}`
+        `✓ Processing row ${i}: Site="${siteName}" Item="${itemName}" SalesNo="${salesNo}" Qty="${cleanQty}" Unit="${unit}" - ${cleanQty}${unit} × ¥${finalUnitPrice} = ¥${cleanAmount}`
       )
 
       const masterRow = createMasterRow({
@@ -174,7 +178,7 @@ class CleanIndustryParser extends BaseParser {
         site: siteName || 'ALLAGI株式会社',
         date: formattedDate,
         item: itemName,
-        qty: cleanQty,
+        qty: cleanQty, // FIXED: Now uses actual quantity
         unit: unit || '式',
         price: finalUnitPrice || cleanAmount,
         amount: cleanAmount,

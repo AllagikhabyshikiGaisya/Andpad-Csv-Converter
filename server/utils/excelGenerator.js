@@ -9,6 +9,7 @@ const {
   addInvoiceTotalsToRows,
   applyVendorSpecificRules,
   resetSequenceCounter,
+  getVendorSystemId,
 } = require('./excelUtils')
 const { getParser, hasCustomParser } = require('./parsers')
 
@@ -47,10 +48,11 @@ function generateExcel(csvData, mapping, outputFormat = 'xlsx') {
 
     console.log('✓ Transformed rows:', transformedData.length)
 
-    // CRITICAL: Add invoice totals per vendor group
+    // CRITICAL: Add invoice totals per vendor group AND consolidate by project ID
     transformedData = addInvoiceTotalsToRows(transformedData)
 
-    // Apply vendor-specific rules (e.g., 大萬 1% discount)
+    // CRITICAL: Apply vendor-specific rules AFTER consolidation (e.g., 大萬 1% discount)
+    // This ensures the discount is applied to the final consolidated amounts
     transformedData = applyVendorSpecificRules(transformedData, mapping.vendor)
 
     // Generate file based on format
@@ -175,7 +177,6 @@ function parseWithMapping(csvData, mapping) {
 }
 
 // Create Excel with merged cells for same vendor IDs
-// Create Excel with merged cells for duplicate values in specific columns
 function createExcelWorkbook(transformedData) {
   const workbook = XLSX.utils.book_new()
 
@@ -245,6 +246,7 @@ function createExcelWorkbook(transformedData) {
 
   return buffer
 }
+
 function createCSVFile(transformedData) {
   const csv = Papa.unparse(transformedData, {
     columns: MASTER_COLUMNS,
@@ -301,14 +303,23 @@ function generateCombinedExcel(filesData, outputFormat = 'xlsx') {
 
     console.log(`\n✓ Total combined rows: ${allTransformedData.length}`)
 
-    // CRITICAL: Group by vendor and add totals per vendor
+    // CRITICAL: Group by vendor and add totals per vendor, then consolidate
     allTransformedData = addInvoiceTotalsToRows(allTransformedData)
 
-    // Apply vendor-specific rules for each vendor in the combined file
-    const processedVendors = new Set()
-    allTransformedData = allTransformedData.map(row => {
-      const vendorId = row['取引先']
+    // CRITICAL: Apply vendor-specific rules for each vendor in the combined file
+    // Group by vendor and apply rules to each vendor's data
+    const vendorGroups = {}
 
+    allTransformedData.forEach(row => {
+      const vendorId = row['取引先']
+      if (!vendorGroups[vendorId]) {
+        vendorGroups[vendorId] = []
+      }
+      vendorGroups[vendorId].push(row)
+    })
+
+    // Apply vendor-specific rules to each vendor group
+    Object.keys(vendorGroups).forEach(vendorId => {
       // Find vendor name from system ID
       let vendorName = null
       for (const [name, id] of Object.entries(
@@ -320,16 +331,16 @@ function generateCombinedExcel(filesData, outputFormat = 'xlsx') {
         }
       }
 
-      // Apply vendor-specific rules once per vendor
-      if (vendorName && !processedVendors.has(vendorName)) {
-        processedVendors.add(vendorName)
-        const vendorRows = allTransformedData.filter(
-          r => r['取引先'] === vendorId
-        )
-        applyVendorSpecificRules(vendorRows, vendorName)
+      if (vendorName) {
+        console.log(`\nApplying rules for vendor: ${vendorName}`)
+        applyVendorSpecificRules(vendorGroups[vendorId], vendorName)
       }
+    })
 
-      return row
+    // Flatten back to single array
+    allTransformedData = []
+    Object.values(vendorGroups).forEach(group => {
+      allTransformedData.push(...group)
     })
 
     console.log('✓ Vendors processed:', Object.keys(vendorCounts).join(', '))
