@@ -1,5 +1,5 @@
 // ============================================
-// EXCEL UTILITIES - FIXED FOR ALL REQUIREMENTS
+// EXCEL UTILITIES - COMPLETE FIXED VERSION
 // ============================================
 
 const MASTER_COLUMNS = [
@@ -79,7 +79,7 @@ function getVendorSystemId(vendorName) {
   return systemId
 }
 
-// FIXED: Format is YYYYMMDDNNN (no prefix, 3-digit sequence)
+// FIXED: Format is YYYYMMDDNNN (3-digit sequence with leading zeros)
 function generateInvoiceManagementId(sequenceNumber = 1) {
   const today = new Date()
   const year = today.getFullYear()
@@ -135,7 +135,6 @@ function generateInvoiceName(vendorName, invoiceDate = null) {
     month = String(today.getMonth() + 1).padStart(2, '0')
   }
 
-  // CRITICAL: No underscore between year-month and vendor name
   return `${year}${month}${vendorName}_請求書`
 }
 
@@ -146,29 +145,21 @@ function createMasterRow(data) {
     row[col] = ''
   })
 
-  // ISSUE 1: 請求管理ID
   row['請求管理ID'] = generateInvoiceManagementId(dailySequenceCounter++)
 
-  // ISSUE 2: 取引先 (System ID)
   const vendorName = String(data.vendor || '').trim()
   row['取引先'] = getVendorSystemId(vendorName)
 
-  // ISSUE 3: 取引設定
   row['取引設定'] = ANDPAD_DEFAULTS.取引設定
 
-  // ISSUE 4: 担当者(発注側)
   row['担当者(発注側)'] = ANDPAD_DEFAULTS.担当者_発注側
 
-  // ISSUE 5: 請求名 (Format: YYYYMM業者名_請求書)
-  // CRITICAL: Use vendor NAME not system ID for invoice name
   const invoiceDate = data.date || ''
   const invoiceName = generateInvoiceName(vendorName, invoiceDate)
   row['請求名'] = invoiceName
 
-  // Store vendor name for consolidation
   row['_vendorName'] = vendorName
 
-  // Project ID
   const siteName = String(data.site || '').trim()
   const providedProjectId = String(data.projectId || '').trim()
 
@@ -176,29 +167,26 @@ function createMasterRow(data) {
     row['案件管理ID'] = providedProjectId
   } else {
     row['案件管理ID'] = getProjectIdForSite(vendorName, siteName)
+    console.warn(
+      `⚠️ 案件管理ID not provided, auto-generated: ${row['案件管理ID']}`
+    )
   }
 
-  // ISSUE 7: 現場監督
   row['現場監督'] = ANDPAD_DEFAULTS.現場監督
 
-  // ISSUE 8: 納品実績日
   row['納品実績日'] = formatDate(invoiceDate)
 
-  // 支払予定日
+  // FIXED: Payment due date calculation - end of next month
   row['支払予定日'] = calculatePaymentDueDate(invoiceDate)
 
-  // ISSUE 9: 請求納品明細名 MUST match 請求名
   row['請求納品明細名'] = invoiceName
 
-  // Quantity and unit
   row['数量'] = cleanNumber(data.qty || '') || '1'
   row['単位'] = String(data.unit || '').trim() || '式'
 
-  // ISSUE 10 & 11: Tax-excluded amounts
   row['単価(税抜)'] = cleanNumber(data.price || '')
   row['金額(税抜)'] = cleanNumber(data.amount || '')
 
-  // ISSUE 10 & 11: Calculate tax-included amounts (×1.10)
   if (row['金額(税抜)']) {
     const amount = parseFloat(row['金額(税抜)']) || 0
     row['金額(税込)'] = Math.round(amount * 1.1).toString()
@@ -209,13 +197,10 @@ function createMasterRow(data) {
     row['単価(税込)'] = Math.round(price * 1.1).toString()
   }
 
-  // ISSUE 12: 工事種類
   row['工事種類'] = determineConstructionType(data.item || '', vendorName)
 
-  // 課税フラグ - Default to "課税" (taxable)
   row['課税フラグ'] = '課税'
 
-  // 請求納品明細備考
   row['請求納品明細備考'] = String(data.workNo || '').trim()
 
   if (data.remarks) {
@@ -225,10 +210,8 @@ function createMasterRow(data) {
       : data.remarks
   }
 
-  // 結果 - Leave empty as per requirements
   row['結果'] = ''
 
-  // Store temporary fields for grouping
   row['_siteName'] = siteName
   row['_itemName'] = data.item || ''
   row['_vendorName'] = vendorName
@@ -259,6 +242,7 @@ function createPurchaseProjectRow(data) {
   return row
 }
 
+// FIXED: Calculate payment due date - end of next month
 function calculatePaymentDueDate(invoiceDate) {
   if (!invoiceDate) return ''
 
@@ -274,9 +258,18 @@ function calculatePaymentDueDate(invoiceDate) {
     const day = parseInt(parts[2])
 
     const date = new Date(year, month, day)
-    date.setDate(date.getDate() + 30)
 
-    return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`
+    // Move to next month
+    date.setMonth(date.getMonth() + 1)
+
+    // Set to last day of that month
+    date.setMonth(date.getMonth() + 1)
+    date.setDate(0)
+
+    return `${date.getFullYear()}/${String(date.getMonth() + 1).padStart(
+      2,
+      '0'
+    )}/${String(date.getDate()).padStart(2, '0')}`
   } catch (e) {
     console.warn('Could not calculate payment due date:', e.message)
     return ''
@@ -284,7 +277,6 @@ function calculatePaymentDueDate(invoiceDate) {
 }
 
 function determineConstructionType(itemDescription, vendorName) {
-  // CRITICAL: クリーン産業 is waste disposal, should always be "その他"
   if (vendorName === 'クリーン産業' || vendorName.includes('クリーン')) {
     return 'その他'
   }
@@ -343,14 +335,12 @@ function determineConstructionType(itemDescription, vendorName) {
 
   const lowerItem = itemDescription.toLowerCase()
 
-  // Check "その他" keywords first (including waste disposal)
   if (
     otherKeywords.some(keyword => lowerItem.includes(keyword.toLowerCase()))
   ) {
     return 'その他'
   }
 
-  // Then check building materials
   if (
     buildingMaterialKeywords.some(keyword =>
       lowerItem.includes(keyword.toLowerCase())
@@ -359,7 +349,6 @@ function determineConstructionType(itemDescription, vendorName) {
     return '建材関係'
   }
 
-  // Default to その他 for クリーン産業 and similar vendors
   return 'その他'
 }
 
@@ -402,7 +391,6 @@ function applyVendorSpecificRules(rows, vendorName) {
   return rows
 }
 
-// Calculate invoice totals per site group
 function calculateInvoiceTotals(rows) {
   let totalTaxExcluded = 0
   let totalTaxIncluded = 0
@@ -421,7 +409,24 @@ function calculateInvoiceTotals(rows) {
   }
 }
 
-// ISSUE 13: Consolidate rows by Project Management ID
+// FIXED: Validation for totals (±1% tolerance)
+function validateTotals(rows, vendorName) {
+  rows.forEach((row, index) => {
+    const invoiceAmountExcluded = parseFloat(row['請求納品金額(税抜)']) || 0
+    const totalAmountExcluded = parseFloat(row['金額(税抜)']) || 0
+
+    const difference = Math.abs(invoiceAmountExcluded - totalAmountExcluded)
+    const percentDiff = (difference / totalAmountExcluded) * 100
+
+    if (percentDiff > 1) {
+      console.warn(`⚠️ Row ${index}: Total mismatch > 1% for ${vendorName}`)
+      console.warn(`  請求納品金額: ¥${invoiceAmountExcluded}`)
+      console.warn(`  金額合計: ¥${totalAmountExcluded}`)
+      console.warn(`  Difference: ${percentDiff.toFixed(2)}%`)
+    }
+  })
+}
+
 function consolidateByProjectId(rows) {
   if (!rows || rows.length === 0) return rows
 
@@ -441,6 +446,7 @@ function consolidateByProjectId(rows) {
   console.log(`Found ${Object.keys(projectGroups).length} unique project IDs`)
 
   const consolidatedRows = []
+  let consolidatedSequence = 1
 
   Object.keys(projectGroups).forEach(projectId => {
     const groupRows = projectGroups[projectId]
@@ -455,6 +461,8 @@ function consolidateByProjectId(rows) {
 
     const itemNames = []
     const remarks = []
+
+    const metadataInvoiceDate = groupRows[0]['_invoiceDate'] || ''
 
     groupRows.forEach(row => {
       const amountExcluded = parseFloat(row['金額(税抜)']) || 0
@@ -472,7 +480,11 @@ function consolidateByProjectId(rows) {
       }
     })
 
-    // ISSUE 6: Set 請求納品金額 (both tax-excluded and tax-included)
+    consolidatedRow['請求管理ID'] = generateInvoiceManagementId(
+      consolidatedSequence++
+    )
+    console.log(`   ✓ New 請求管理ID: ${consolidatedRow['請求管理ID']}`)
+
     consolidatedRow['請求納品金額(税抜)'] = totalAmountExcluded.toString()
     consolidatedRow['請求納品金額(税込)'] = totalAmountIncluded.toString()
 
@@ -484,19 +496,20 @@ function consolidateByProjectId(rows) {
     consolidatedRow['単価(税抜)'] = totalAmountExcluded.toString()
     consolidatedRow['単価(税込)'] = totalAmountIncluded.toString()
 
-    // CRITICAL FIX: Regenerate 請求名 and 請求納品明細名 using stored vendor name
     const vendorName = consolidatedRow['_vendorName'] || 'クリーン産業'
-    const invoiceDate =
-      consolidatedRow['_invoiceDate'] || consolidatedRow['納品実績日']
-    const correctInvoiceName = generateInvoiceName(vendorName, invoiceDate)
+    const correctInvoiceName = generateInvoiceName(
+      vendorName,
+      metadataInvoiceDate
+    )
 
     consolidatedRow['請求名'] = correctInvoiceName
     consolidatedRow['請求納品明細名'] = correctInvoiceName
 
-    // CRITICAL FIX: Use consistent invoice date for 納品実績日
-    if (invoiceDate) {
-      consolidatedRow['納品実績日'] = formatDate(invoiceDate)
-      consolidatedRow['支払予定日'] = calculatePaymentDueDate(invoiceDate)
+    if (metadataInvoiceDate) {
+      consolidatedRow['納品実績日'] = formatDate(metadataInvoiceDate)
+      consolidatedRow['支払予定日'] =
+        calculatePaymentDueDate(metadataInvoiceDate)
+      console.log(`   ✓ Using metadata date: ${consolidatedRow['納品実績日']}`)
     }
 
     const uniqueRemarks = [...new Set(remarks.filter(r => r))]
@@ -555,6 +568,10 @@ function addInvoiceTotalsToRows(rows) {
 
   const consolidatedRows = consolidateByProjectId(rows)
 
+  // Validate totals after consolidation
+  const vendorName = consolidatedRows[0]?._vendorName || 'Unknown'
+  validateTotals(consolidatedRows, vendorName)
+
   consolidatedRows.forEach(row => {
     delete row['_siteName']
     delete row['_itemName']
@@ -568,25 +585,44 @@ function addInvoiceTotalsToRows(rows) {
 function formatDate(dateStr) {
   if (!dateStr) return ''
   dateStr = String(dateStr).trim()
-  if (dateStr.match(/^\d{4}\/\d{1,2}\/\d{1,2}$/)) return dateStr
+
+  if (dateStr.match(/^\d{4}\/\d{2}\/\d{2}$/)) return dateStr
+
+  if (dateStr.match(/^\d{4}\/\d{1,2}\/\d{1,2}$/)) {
+    const parts = dateStr.split('/')
+    const year = parts[0]
+    const month = String(parts[1]).padStart(2, '0')
+    const day = String(parts[2]).padStart(2, '0')
+    return `${year}/${month}/${day}`
+  }
+
   if (dateStr.match(/^\d{8}$/)) {
     const year = dateStr.substring(0, 4)
     const month = dateStr.substring(4, 6)
     const day = dateStr.substring(6, 8)
-    return `${year}/${parseInt(month)}/${parseInt(day)}`
+    return `${year}/${month}/${day}`
   }
+
   if (!isNaN(dateStr) && dateStr.length > 4) {
     try {
       const date = new Date((parseFloat(dateStr) - 25569) * 86400 * 1000)
-      return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`
+      const year = date.getFullYear()
+      const month = String(date.getMonth() + 1).padStart(2, '0')
+      const day = String(date.getDate()).padStart(2, '0')
+      return `${year}/${month}/${day}`
     } catch (e) {
       return dateStr
     }
   }
+
   if (dateStr.match(/^\d{1,2}\/\d{1,2}$/)) {
     const year = new Date().getFullYear()
-    return `${year}/${dateStr}`
+    const parts = dateStr.split('/')
+    const month = String(parts[0]).padStart(2, '0')
+    const day = String(parts[1]).padStart(2, '0')
+    return `${year}/${month}/${day}`
   }
+
   return dateStr
 }
 
@@ -680,4 +716,5 @@ module.exports = {
   generateInvoiceName,
   generateProjectId,
   getProjectIdForSite,
+  validateTotals,
 }

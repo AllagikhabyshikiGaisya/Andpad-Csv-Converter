@@ -14,6 +14,179 @@ const {
 const { getParser, hasCustomParser } = require('./parsers')
 
 /**
+ * Enhanced test logging for all vendors
+ */
+function logTestResults(vendor, csvData, transformedData, stage = 'COMPLETE') {
+  console.log('\n' + '='.repeat(100))
+  console.log(`TEST RESULTS FOR: ${vendor} [${stage}]`)
+  console.log('='.repeat(100))
+
+  console.log('\n📥 INPUT DATA:')
+  console.log(`  Total input rows: ${csvData.length}`)
+  if (csvData.length > 0) {
+    console.log(`  Input columns: ${Object.keys(csvData[0]).length}`)
+    console.log(
+      `  First 3 column headers:`,
+      Object.keys(csvData[0]).slice(0, 3)
+    )
+  }
+
+  console.log('\n📤 OUTPUT DATA:')
+  console.log(`  Total output rows: ${transformedData.length}`)
+
+  if (transformedData.length > 0) {
+    const firstRow = transformedData[0]
+    console.log('\n  📋 First Row Data:')
+    console.log(`    請求管理ID: ${firstRow['請求管理ID']}`)
+    console.log(`    取引先 (System ID): ${firstRow['取引先']}`)
+    console.log(`    取引設定: ${firstRow['取引設定']}`)
+    console.log(`    担当者(発注側): ${firstRow['担当者(発注側)']}`)
+    console.log(`    請求名: ${firstRow['請求名']}`)
+    console.log(`    案件管理ID: ${firstRow['案件管理ID']}`)
+    console.log(`    請求納品金額(税抜): ¥${firstRow['請求納品金額(税抜)']}`)
+    console.log(`    請求納品金額(税込): ¥${firstRow['請求納品金額(税込)']}`)
+    console.log(`    現場監督: ${firstRow['現場監督']}`)
+    console.log(`    納品実績日: ${firstRow['納品実績日']}`)
+    console.log(`    支払予定日: ${firstRow['支払予定日']}`)
+    console.log(`    請求納品明細名: ${firstRow['請求納品明細名']}`)
+    console.log(`    工事種類: ${firstRow['工事種類']}`)
+  }
+
+  console.log('\n💰 FINANCIAL SUMMARY:')
+  const totalTaxExcluded = transformedData.reduce((sum, row) => {
+    return sum + (parseFloat(row['金額(税抜)']) || 0)
+  }, 0)
+  const totalTaxIncluded = transformedData.reduce((sum, row) => {
+    return sum + (parseFloat(row['金額(税込)']) || 0)
+  }, 0)
+
+  const invoiceTotalExcluded = transformedData.reduce((sum, row) => {
+    return sum + (parseFloat(row['請求納品金額(税抜)']) || 0)
+  }, 0)
+  const invoiceTotalIncluded = transformedData.reduce((sum, row) => {
+    return sum + (parseFloat(row['請求納品金額(税込)']) || 0)
+  }, 0)
+
+  console.log(
+    `  Line Items Total (税抜): ¥${totalTaxExcluded.toLocaleString()}`
+  )
+  console.log(
+    `  Line Items Total (税込): ¥${totalTaxIncluded.toLocaleString()}`
+  )
+  console.log(
+    `  Invoice Total (税抜): ¥${invoiceTotalExcluded.toLocaleString()}`
+  )
+  console.log(
+    `  Invoice Total (税込): ¥${invoiceTotalIncluded.toLocaleString()}`
+  )
+
+  if (totalTaxExcluded > 0) {
+    const taxRate = ((totalTaxIncluded / totalTaxExcluded - 1) * 100).toFixed(1)
+    console.log(`  Calculated Tax Rate: ${taxRate}%`)
+  }
+
+  console.log('\n✓ VALIDATION CHECKS:')
+
+  // Check 1: 請求名 = 請求納品明細名
+  const nameMatch = transformedData.every(
+    row => row['請求名'] === row['請求納品明細名']
+  )
+  console.log(`  [${nameMatch ? '✓' : '✗'}] 請求名 = 請求納品明細名`)
+
+  // Check 2: Tax calculation accuracy
+  let taxCorrectCount = 0
+  transformedData.forEach(row => {
+    const taxExcluded = parseFloat(row['金額(税抜)']) || 0
+    const taxIncluded = parseFloat(row['金額(税込)']) || 0
+    const expected = Math.round(taxExcluded * 1.1)
+    if (Math.abs(taxIncluded - expected) <= 1) {
+      taxCorrectCount++
+    }
+  })
+  console.log(
+    `  [${
+      taxCorrectCount === transformedData.length ? '✓' : '⚠'
+    }] Tax calculation (×1.10): ${taxCorrectCount}/${
+      transformedData.length
+    } correct`
+  )
+
+  // Check 3: Date format YYYY/MM/DD
+  const dateFormatCorrect = transformedData.every(row => {
+    const date = row['納品実績日']
+    return !date || date.match(/^\d{4}\/\d{2}\/\d{2}$/)
+  })
+  console.log(`  [${dateFormatCorrect ? '✓' : '✗'}] Date format (YYYY/MM/DD)`)
+
+  // Check 4: System ID present
+  const systemIdCorrect = transformedData.every(row => {
+    const id = row['取引先']
+    return id && id.length > 0
+  })
+  console.log(`  [${systemIdCorrect ? '✓' : '✗'}] System ID present`)
+
+  // Check 5: 取引設定 = '紙発注'
+  const settingCorrect = transformedData.every(
+    row => row['取引設定'] === '紙発注'
+  )
+  console.log(`  [${settingCorrect ? '✓' : '✗'}] 取引設定 = '紙発注'`)
+
+  // Check 6: 担当者 and 現場監督 = '925646'
+  const personInChargeCorrect = transformedData.every(
+    row => row['担当者(発注側)'] === '925646' && row['現場監督'] === '925646'
+  )
+  console.log(
+    `  [${personInChargeCorrect ? '✓' : '✗'}] 担当者 & 現場監督 = '925646'`
+  )
+
+  // Check 7: Project ID consolidation
+  const uniqueProjectIds = new Set(transformedData.map(r => r['案件管理ID']))
+  console.log(
+    `  [✓] Unique Project IDs: ${uniqueProjectIds.size} (${[
+      ...uniqueProjectIds,
+    ].join(', ')})`
+  )
+
+  // Check 8: 工事種類 values
+  const constructionTypes = new Set(transformedData.map(r => r['工事種類']))
+  console.log(`  [✓] Construction types: ${[...constructionTypes].join(', ')}`)
+
+  // Check 9: 請求管理ID format (YYYYMMDDNNN)
+  const idFormatCorrect = transformedData.every(row => {
+    const id = row['請求管理ID']
+    return id && id.match(/^\d{8}\d{3}$/)
+  })
+  console.log(
+    `  [${idFormatCorrect ? '✓' : '✗'}] 請求管理ID format (YYYYMMDDNNN)`
+  )
+
+  // Check 10: Invoice name format (YYYYMM業者名_請求書)
+  const invoiceNameFormat = transformedData.every(row => {
+    const name = row['請求名']
+    return name && name.match(/^\d{6}.*_請求書$/)
+  })
+  console.log(
+    `  [${
+      invoiceNameFormat ? '✓' : '✗'
+    }] Invoice name format (YYYYMM業者名_請求書)`
+  )
+
+  console.log('\n📊 SAMPLE OUTPUT ROWS (First 2):')
+  transformedData.slice(0, 2).forEach((row, idx) => {
+    console.log(`\n  --- Row ${idx + 1} ---`)
+    MASTER_COLUMNS.forEach(col => {
+      if (row[col]) {
+        console.log(`    ${col}: ${row[col]}`)
+      }
+    })
+  })
+
+  console.log('\n' + '='.repeat(100))
+  console.log(`END TEST RESULTS FOR: ${vendor}`)
+  console.log('='.repeat(100) + '\n')
+}
+
+/**
  * Generate Excel or CSV file from CSV data using vendor-specific parser or mapping
  */
 function generateExcel(csvData, mapping, outputFormat = 'xlsx') {
@@ -24,12 +197,10 @@ function generateExcel(csvData, mapping, outputFormat = 'xlsx') {
     console.log('Has custom parser:', mapping.customParser)
     console.log('Input rows:', csvData.length)
 
-    // Reset sequence counter for each file
     resetSequenceCounter()
 
     let transformedData = []
 
-    // Route to custom parser or standard mapping
     if (mapping.customParser === true) {
       console.log('✓ Using custom parser for:', mapping.vendor)
       transformedData = parseWithCustomParser(csvData, mapping.vendor)
@@ -38,7 +209,6 @@ function generateExcel(csvData, mapping, outputFormat = 'xlsx') {
       transformedData = parseWithMapping(csvData, mapping)
     }
 
-    // Validate results
     if (!transformedData || transformedData.length === 0) {
       console.error('Parser returned no data')
       throw new Error(
@@ -48,12 +218,30 @@ function generateExcel(csvData, mapping, outputFormat = 'xlsx') {
 
     console.log('✓ Transformed rows:', transformedData.length)
 
-    // CRITICAL: Add invoice totals per vendor group AND consolidate by project ID
+    // Log after initial transformation
+    logTestResults(mapping.vendor, csvData, transformedData, 'AFTER PARSING')
+
+    // Add invoice totals per vendor group AND consolidate by project ID
     transformedData = addInvoiceTotalsToRows(transformedData)
 
-    // CRITICAL: Apply vendor-specific rules AFTER consolidation (e.g., 大萬 1% discount)
-    // This ensures the discount is applied to the final consolidated amounts
+    // Log after consolidation
+    logTestResults(
+      mapping.vendor,
+      csvData,
+      transformedData,
+      'AFTER CONSOLIDATION'
+    )
+
+    // Apply vendor-specific rules AFTER consolidation
     transformedData = applyVendorSpecificRules(transformedData, mapping.vendor)
+
+    // Log final results
+    logTestResults(
+      mapping.vendor,
+      csvData,
+      transformedData,
+      'FINAL (AFTER RULES)'
+    )
 
     // Generate file based on format
     let buffer
@@ -77,7 +265,7 @@ function generateExcel(csvData, mapping, outputFormat = 'xlsx') {
       fileExtension: fileExtension,
     }
   } catch (error) {
-    console.error('✖ File generation error:', error.message)
+    console.error('✗ File generation error:', error.message)
     console.error('Stack:', error.stack)
     return {
       success: false,
@@ -113,7 +301,7 @@ function parseWithMapping(csvData, mapping) {
   const missingCols = requiredCols.filter(col => !csvHeaders.includes(col))
 
   if (missingCols.length > 0) {
-    console.error('✖ Missing required columns:', missingCols)
+    console.error('✗ Missing required columns:', missingCols)
     throw new Error(`必要な列が見つかりません: ${missingCols.join(', ')}`)
   }
 
@@ -176,7 +364,6 @@ function parseWithMapping(csvData, mapping) {
   return results
 }
 
-// Create Excel with merged cells for same vendor IDs
 function createExcelWorkbook(transformedData) {
   const workbook = XLSX.utils.book_new()
 
@@ -188,35 +375,31 @@ function createExcelWorkbook(transformedData) {
 
   worksheet['!merges'] = []
 
-  // CRITICAL: Merge cells for columns that have duplicate consecutive values
-  // Columns to merge: 取引先 (B), 請求名 (E), 請求納品明細名 (L)
   const columnsToMerge = [
-    { col: 1, name: '取引先' }, // Column B
-    { col: 4, name: '請求名' }, // Column E
-    { col: 11, name: '請求納品明細名' }, // Column L
+    { col: 1, name: '取引先' },
+    { col: 4, name: '請求名' },
+    { col: 11, name: '請求納品明細名' },
   ]
 
   columnsToMerge.forEach(({ col, name }) => {
     let currentValue = null
-    let startRow = 1 // Start from row 1 (after header row 0)
+    let startRow = 1
 
     for (let i = 0; i < transformedData.length; i++) {
       const cellValue = transformedData[i][name]
 
       if (cellValue !== currentValue) {
-        // New value found, merge previous cells if needed
         if (currentValue !== null && i > startRow) {
           worksheet['!merges'].push({
-            s: { r: startRow, c: col }, // Start row, column
-            e: { r: i, c: col }, // End row, column
+            s: { r: startRow, c: col },
+            e: { r: i, c: col },
           })
         }
         currentValue = cellValue
-        startRow = i + 1 // +1 because row 0 is header
+        startRow = i + 1
       }
     }
 
-    // Merge the last group
     if (transformedData.length > startRow) {
       worksheet['!merges'].push({
         s: { r: startRow, c: col },
@@ -225,7 +408,6 @@ function createExcelWorkbook(transformedData) {
     }
   })
 
-  // Center align merged cells for all merged columns
   columnsToMerge.forEach(({ col }) => {
     for (let i = 1; i <= transformedData.length; i++) {
       const cellRef = XLSX.utils.encode_cell({ r: i, c: col })
@@ -268,13 +450,11 @@ function generateCombinedExcel(filesData, outputFormat = 'xlsx') {
     console.log('Number of files:', filesData.length)
     console.log('Output format:', outputFormat)
 
-    // Reset sequence counter for batch processing
     resetSequenceCounter()
 
     const allTransformedData = []
     const vendorCounts = {}
 
-    // Process each file
     for (let i = 0; i < filesData.length; i++) {
       const { csvData, mapping } = filesData[i]
       console.log(`\nProcessing file ${i + 1}: ${mapping.vendor}`)
@@ -303,11 +483,8 @@ function generateCombinedExcel(filesData, outputFormat = 'xlsx') {
 
     console.log(`\n✓ Total combined rows: ${allTransformedData.length}`)
 
-    // CRITICAL: Group by vendor and add totals per vendor, then consolidate
     allTransformedData = addInvoiceTotalsToRows(allTransformedData)
 
-    // CRITICAL: Apply vendor-specific rules for each vendor in the combined file
-    // Group by vendor and apply rules to each vendor's data
     const vendorGroups = {}
 
     allTransformedData.forEach(row => {
@@ -318,9 +495,7 @@ function generateCombinedExcel(filesData, outputFormat = 'xlsx') {
       vendorGroups[vendorId].push(row)
     })
 
-    // Apply vendor-specific rules to each vendor group
     Object.keys(vendorGroups).forEach(vendorId => {
-      // Find vendor name from system ID
       let vendorName = null
       for (const [name, id] of Object.entries(
         require('./excelUtils').VENDOR_SYSTEM_IDS
@@ -337,7 +512,6 @@ function generateCombinedExcel(filesData, outputFormat = 'xlsx') {
       }
     })
 
-    // Flatten back to single array
     allTransformedData = []
     Object.values(vendorGroups).forEach(group => {
       allTransformedData.push(...group)
@@ -345,7 +519,9 @@ function generateCombinedExcel(filesData, outputFormat = 'xlsx') {
 
     console.log('✓ Vendors processed:', Object.keys(vendorCounts).join(', '))
 
-    // Generate file based on format
+    // Log combined results
+    logTestResults('COMBINED FILE', [], allTransformedData, 'FINAL COMBINED')
+
     let buffer
     let fileExtension
 
@@ -369,7 +545,7 @@ function generateCombinedExcel(filesData, outputFormat = 'xlsx') {
       vendorBreakdown: vendorCounts,
     }
   } catch (error) {
-    console.error('✖ Combined file generation error:', error.message)
+    console.error('✗ Combined file generation error:', error.message)
     console.error('Stack:', error.stack)
     return {
       success: false,

@@ -23,6 +23,9 @@ class CleanIndustryParser extends BaseParser {
       siteName: '',
     }
 
+    // CRITICAL: Collect all dates from header for smart detection
+    const headerDates = []
+
     // Extract metadata from header rows
     for (let i = 0; i < Math.min(csvData.length, 15); i++) {
       const row = csvData[i]
@@ -33,14 +36,60 @@ class CleanIndustryParser extends BaseParser {
         metadata.clientName = 'ALLAGI株式会社'
       }
 
-      // Extract invoice date
-      const dateMatch = rowText.match(/(\d{4})\/(\d{1,2})\/(\d{1,2})/)
-      if (dateMatch) {
-        metadata.invoiceDate = `${dateMatch[1]}/${dateMatch[2]}/${dateMatch[3]}`
+      // PRIORITY 1: Look for invoice date with context keywords
+      // Check if this row contains the keyword
+      if (
+        rowText.includes('請求年月日') ||
+        rowText.includes('請求日') ||
+        rowText.includes('発行日')
+      ) {
+        console.log(`✓ Found row with invoice date keyword: Row ${i}`)
+
+        // Look for date in the NEXT row (common Japanese invoice format)
+        if (i + 1 < csvData.length) {
+          const nextRow = csvData[i + 1]
+          const nextValues = Object.values(nextRow)
+          const nextRowText = nextValues.join('|')
+
+          const dateMatch = nextRowText.match(/(\d{4})\/(\d{1,2})\/(\d{1,2})/)
+          if (dateMatch) {
+            const year = dateMatch[1]
+            const month = String(dateMatch[2]).padStart(2, '0')
+            const day = String(dateMatch[3]).padStart(2, '0')
+            metadata.invoiceDate = `${year}/${month}/${day}`
+            console.log(
+              `✓ Found invoice date in next row: ${metadata.invoiceDate}`
+            )
+            break
+          }
+        }
+
+        // Also try to find date in the SAME row
+        const dateMatch = rowText.match(/(\d{4})\/(\d{1,2})\/(\d{1,2})/)
+        if (dateMatch && !metadata.invoiceDate) {
+          const year = dateMatch[1]
+          const month = String(dateMatch[2]).padStart(2, '0')
+          const day = String(dateMatch[3]).padStart(2, '0')
+          metadata.invoiceDate = `${year}/${month}/${day}`
+          console.log(
+            `✓ Found invoice date with keyword in same row: ${metadata.invoiceDate}`
+          )
+          break
+        }
+      }
+
+      // Collect all dates for analysis
+      const allMatches = rowText.matchAll(/(\d{4})\/(\d{1,2})\/(\d{1,2})/g)
+      for (const match of allMatches) {
+        const year = match[1]
+        const month = String(match[2]).padStart(2, '0')
+        const day = String(match[3]).padStart(2, '0')
+        headerDates.push(`${year}/${month}/${day}`)
       }
     }
 
-    console.log('Extracted metadata:', metadata)
+    console.log('Extracted metadata (initial):', metadata)
+    console.log('Header dates found:', headerDates)
 
     // Find header row that contains column names
     let headerRowIndex = -1
@@ -71,10 +120,78 @@ class CleanIndustryParser extends BaseParser {
       console.log('⚠️ Could not find header row, using fallback start at row 8')
     }
 
+    // CRITICAL: Collect transaction dates for smart invoice date detection
+    const transactionDates = []
+
+    // First pass: Collect all transaction dates
+    for (let i = dataStartIndex; i < csvData.length; i++) {
+      const row = csvData[i]
+      const values = Object.values(row).map(v => String(v || '').trim())
+
+      const dateStr = values[2] || ''
+      const itemName = values[4] || ''
+
+      // Skip summary rows
+      if (itemName.startsWith('【')) continue
+
+      // Extract transaction date
+      if (dateStr && dateStr.match(/^\d{1,2}\/\d{1,2}$/)) {
+        const parts = dateStr.split('/')
+        const year = new Date().getFullYear()
+        const month = String(parts[0]).padStart(2, '0')
+        const day = String(parts[1]).padStart(2, '0')
+        transactionDates.push(`${year}/${month}/${day}`)
+      } else if (dateStr && dateStr.match(/^\d{4}\/\d{1,2}\/\d{1,2}$/)) {
+        const parts = dateStr.split('/')
+        const year = parts[0]
+        const month = String(parts[1]).padStart(2, '0')
+        const day = String(parts[2]).padStart(2, '0')
+        transactionDates.push(`${year}/${month}/${day}`)
+      }
+    }
+
+    console.log('Transaction dates found:', transactionDates.slice(0, 5))
+
+    // SMART DETECTION: Determine correct invoice date
+    if (!metadata.invoiceDate) {
+      // PRIORITY 2: Use LATEST header date (likely the invoice date, not transaction dates)
+      if (headerDates.length > 0) {
+        // Remove duplicate dates and sort
+        const uniqueDates = [...new Set(headerDates)].sort()
+        // For Japanese invoices, the invoice date is typically at the END of the billing period
+        // So use the LATEST date from header (not earliest)
+        metadata.invoiceDate = uniqueDates[uniqueDates.length - 1]
+        console.log(
+          `✓ Using latest header date as invoice date: ${metadata.invoiceDate}`
+        )
+        console.log(`  (Other header dates: ${uniqueDates.join(', ')})`)
+      }
+      // PRIORITY 3: Use latest transaction date
+      else if (transactionDates.length > 0) {
+        const uniqueTransDates = [...new Set(transactionDates)].sort()
+        metadata.invoiceDate = uniqueTransDates[uniqueTransDates.length - 1]
+        console.log(
+          `✓ Using latest transaction date as invoice date: ${metadata.invoiceDate}`
+        )
+      }
+    }
+
+    // CRITICAL: Final validation
+    if (!metadata.invoiceDate) {
+      console.warn('⚠️ WARNING: No invoice date found, using current date')
+      const today = new Date()
+      const year = today.getFullYear()
+      const month = String(today.getMonth() + 1).padStart(2, '0')
+      const day = String(today.getDate()).padStart(2, '0')
+      metadata.invoiceDate = `${year}/${month}/${day}`
+    }
+
+    console.log('Final metadata:', metadata)
+
     // クリーン産業 CSV format (based on logs):
     // Column positions: [0:業者名, 1:現場名, 2:月日, 3:売上No, 4:品名, 5:数量, 6:単位, 7:単価, 8:小計, 9:消費税, 10:金額]
 
-    // Process data rows
+    // Process data rows (Second pass: actual processing)
     for (let i = dataStartIndex; i < csvData.length; i++) {
       const row = csvData[i]
       const values = Object.values(row).map(v => String(v || '').trim())
@@ -93,7 +210,7 @@ class CleanIndustryParser extends BaseParser {
       // Extract fields by position
       const vendorName = values[0] || ''
       const siteName = values[1] || ''
-      const dateStr = values[2] || ''
+      const dateStr = values[2] || '' // Transaction date (for reference only)
       const salesNo = values[3] || ''
       const itemName = values[4] || ''
       const quantity = values[5] || '1'
@@ -139,7 +256,7 @@ class CleanIndustryParser extends BaseParser {
         continue
       }
 
-      // FIXED: Use actual quantity from source data
+      // Use actual quantity from source data
       const cleanQty = cleanNumber(quantity) || '1'
       const cleanUnitPrice = cleanNumber(unitPrice)
 
@@ -153,21 +270,8 @@ class CleanIndustryParser extends BaseParser {
         }
       }
 
-      // Parse date properly
-      let formattedDate = ''
-      if (dateStr && dateStr.match(/^\d{1,2}\/\d{1,2}$/)) {
-        // Format: "7/1" or "07/01"
-        const parts = dateStr.split('/')
-        const year = metadata.invoiceDate
-          ? metadata.invoiceDate.split('/')[0]
-          : new Date().getFullYear()
-        formattedDate = `${year}/${parts[0]}/${parts[1]}`
-      } else if (dateStr && dateStr.match(/^\d{4}\/\d{1,2}\/\d{1,2}$/)) {
-        // Already in correct format
-        formattedDate = dateStr
-      } else {
-        formattedDate = formatDate(dateStr) || metadata.invoiceDate
-      }
+      // CRITICAL: Always use metadata invoice date
+      const invoiceDate = metadata.invoiceDate
 
       console.log(
         `✓ Processing row ${i}: Site="${siteName}" Item="${itemName}" SalesNo="${salesNo}" Qty="${cleanQty}" Unit="${unit}" - ${cleanQty}${unit} × ¥${finalUnitPrice} = ¥${cleanAmount}`
@@ -176,15 +280,15 @@ class CleanIndustryParser extends BaseParser {
       const masterRow = createMasterRow({
         vendor: 'クリーン産業',
         site: siteName || 'ALLAGI株式会社',
-        date: formattedDate,
+        date: invoiceDate, // ✅ Always use metadata invoice date
         item: itemName,
-        qty: cleanQty, // FIXED: Now uses actual quantity
+        qty: cleanQty,
         unit: unit || '式',
         price: finalUnitPrice || cleanAmount,
         amount: cleanAmount,
-        workNo: salesNo, // This populates 請求納品明細備考
-        remarks: vendorName !== 'ALLAGI株式会社' ? vendorName : '', // Additional info
-        projectId: '', // Let system generate
+        workNo: salesNo,
+        remarks: vendorName !== 'ALLAGI株式会社' ? vendorName : '',
+        projectId: '',
         result: '承認',
       })
 
@@ -218,7 +322,6 @@ class CleanIndustryParser extends BaseParser {
     return matchCount >= 3
   }
 
-  // CRITICAL: Separate method to detect header/info rows
   shouldSkipHeaderRow(vendorName, itemName, allValues) {
     // Skip if this is a column header row
     if (vendorName === '業者名' || itemName === '品名') {

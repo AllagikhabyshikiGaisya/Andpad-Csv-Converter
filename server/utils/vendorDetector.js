@@ -5,7 +5,7 @@ function detectVendor(filename, headers) {
   const mappingsDir = path.join(__dirname, '../mappings')
 
   if (!fs.existsSync(mappingsDir)) {
-    console.error('❌ Mappings directory not found:', mappingsDir)
+    console.error('✖ Mappings directory not found:', mappingsDir)
     return {
       detected: false,
       mapping: null,
@@ -52,7 +52,7 @@ function detectVendor(filename, headers) {
         standardMappings.push(mapping)
       }
     } catch (error) {
-      console.error(`❌ Error reading mapping ${file}:`, error.message)
+      console.error(`✖ Error reading mapping ${file}:`, error.message)
     }
   }
 
