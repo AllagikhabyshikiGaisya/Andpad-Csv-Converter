@@ -1,6 +1,5 @@
-// ============================================
-// TAIMAN PARSER - UPDATED WITH 案件管理ID EXTRACTION
-// ============================================
+// In taimanParser.js - COMPLETE FIXED VERSION
+
 const BaseParser = require('./baseParser')
 const { createMasterRow, cleanNumber, formatDate } = require('../excelUtils')
 
@@ -89,11 +88,16 @@ class TaimanParser extends BaseParser {
         console.log(`✅ Found 工事番号 in column: ${defaultProjectId}`)
         break
       }
+      if (row['伝票番号'] && String(row['伝票番号']).trim() !== '伝票番号') {
+        defaultProjectId = String(row['伝票番号']).trim()
+        console.log(`✅ Found 伝票番号 in column: ${defaultProjectId}`)
+        break
+      }
     }
 
     if (!defaultProjectId) {
       console.warn('⚠️ WARNING: 案件管理ID not found in CSV header')
-      console.warn('⚠️ Will check each data row for 案件管理ID column')
+      console.warn('⚠️ Will try to use 商品コード or 伝票番号 as fallback per row')
     }
 
     // Process data rows
@@ -101,9 +105,13 @@ class TaimanParser extends BaseParser {
       const row = csvData[i]
 
       const productName = String(row['商品名'] || '').trim()
+
+      // ✅ CRITICAL FIX: 請求先名 is the CUSTOMER (ALLAGI), not the vendor
+      // The vendor is always 大萬
       const customerName = String(row['請求先名'] || '').trim()
       const purchaseAmount = String(row['仕入金額'] || '').trim()
 
+      // Skip header rows
       if (
         !productName ||
         productName.includes('商品名') ||
@@ -131,11 +139,15 @@ class TaimanParser extends BaseParser {
         rowProjectId = String(row['現場No']).trim()
       } else if (row['物件No']) {
         rowProjectId = String(row['物件No']).trim()
+      } else if (row['商品コード']) {
+        // Fallback: Use product code as identifier
+        rowProjectId = `TM_${String(row['商品コード']).trim()}`
       }
 
-      // Priority: row > header > error
+      // Priority: row > header > product code fallback
       let finalProjectId = ''
-      if (rowProjectId) {
+      if (rowProjectId && !rowProjectId.startsWith('TM_')) {
+        // Found actual project ID
         finalProjectId = rowProjectId
         if (i < 5) {
           console.log(
@@ -149,14 +161,24 @@ class TaimanParser extends BaseParser {
             `  ✅ Row ${i}: Using 案件管理ID from header: ${finalProjectId}`
           )
         }
+      } else if (rowProjectId && rowProjectId.startsWith('TM_')) {
+        // Using product code as fallback
+        finalProjectId = rowProjectId
+        if (i < 3) {
+          console.warn(`  ⚠️ Row ${i}: Using 商品コード as project ID: ${finalProjectId}`)
+        }
       } else {
+        // Last resort
         finalProjectId = `MISSING_ID_TAIMAN_ROW${i}`
-        console.error(`  ❌ ERROR Row ${i}: No 案件管理ID in CSV`)
+        if (i < 3) {
+          console.error(`  ❌ ERROR Row ${i}: No 案件管理ID in CSV`)
+          console.error(`  ❌ CSV must provide 案件管理ID for proper consolidation`)
+        }
       }
 
       const masterRow = createMasterRow({
-        vendor: customerName || '大萬',
-        site: '',
+        vendor: '大萬', // ✅ FIXED: Always use vendor name, not customer
+        site: customerName || '', // Customer name goes to site field
         date: formatDate(row['出荷日'] || ''),
         item: productName,
         qty: cleanNumber(row['数量'] || '') || '1',
@@ -165,7 +187,7 @@ class TaimanParser extends BaseParser {
         amount: cleanAmount,
         workNo: row['商品コード'] || '',
         remarks: row['備考'] || '',
-        projectId: finalProjectId, // ✅ From CSV
+        projectId: finalProjectId, // ✅ From CSV or fallback
         result: '承認',
       })
 
