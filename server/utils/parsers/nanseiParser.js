@@ -1,6 +1,5 @@
-// ============================================
-// NANSEI PARSER - UPDATED WITH 案件管理ID EXTRACTION
-// ============================================
+// In nanseiParser.js - COMPLETE FIXED VERSION
+
 const BaseParser = require('./baseParser')
 const { createMasterRow, cleanNumber, formatDate } = require('../excelUtils')
 
@@ -13,7 +12,7 @@ class NanseiParser extends BaseParser {
     this.logStart(csvData)
     const results = []
 
-    // ✅ Look for 案件管理ID in header (first 15 rows)
+    // ✅ Extract 案件管理ID from header (first 15 rows)
     let defaultProjectId = ''
     for (let i = 0; i < Math.min(csvData.length, 15); i++) {
       const row = csvData[i]
@@ -39,7 +38,7 @@ class NanseiParser extends BaseParser {
             cleaned !== '物件No'
           ) {
             if (
-              !cleaned.match(/^\d{4}\/\d{1,2}\/\d{1,2}$/) &&
+              !cleaned.match(/^\d{4}\/\d{1,2}\/\d{1,2}/) &&
               !cleaned.includes('請求') &&
               !cleaned.includes('株式会社') &&
               !cleaned.includes('TEL')
@@ -59,7 +58,7 @@ class NanseiParser extends BaseParser {
             if (
               cleaned &&
               cleaned.length > 0 &&
-              !cleaned.match(/^\d{4}\/\d{1,2}\/\d{1,2}$/)
+              !cleaned.match(/^\d{4}\/\d{1,2}\/\d{1,2}/)
             ) {
               defaultProjectId = cleaned
               console.log(
@@ -91,18 +90,21 @@ class NanseiParser extends BaseParser {
 
     if (!defaultProjectId) {
       console.warn('⚠️ WARNING: 案件管理ID not found in CSV header')
-      console.warn('⚠️ Will check each data row for 案件管理ID column')
+      console.warn('⚠️ Each row should have 案件管理ID column')
     }
 
     // Process data rows
     for (let i = 0; i < csvData.length; i++) {
       const row = csvData[i]
 
+      // ✅ CRITICAL FIX: Use correct vendor name (ナンセイ, not customer name)
+      // The customerName field is actually the CLIENT (ALLAGI), not the vendor
       const customerName = String(row['取引先名'] || '').trim()
       const transactionAmount = String(
         row['今回取引額(税抜)'] || row['今回取引額'] || ''
       ).trim()
 
+      // Skip header rows
       if (!customerName || customerName.includes('取引先名')) {
         this.skippedCount++
         continue
@@ -114,7 +116,7 @@ class NanseiParser extends BaseParser {
         continue
       }
 
-      // ✅ CRITICAL: Extract 案件管理ID from row
+      // ✅ Extract 案件管理ID from row
       let rowProjectId = ''
       if (row['案件管理ID']) {
         rowProjectId = String(row['案件管理ID']).trim()
@@ -143,17 +145,26 @@ class NanseiParser extends BaseParser {
           )
         }
       } else {
+        // ❌ ERROR: No project ID found
         finalProjectId = `MISSING_ID_${customerName}_ROW${i}`.replace(
           /\s+/g,
           '_'
         )
-        console.error(`  ❌ ERROR Row ${i}: No 案件管理ID in CSV`)
+        if (i < 3) {
+          console.error(`  ❌ ERROR Row ${i}: No 案件管理ID in CSV`)
+          console.error(`  ❌ CSV must provide 案件管理ID for proper consolidation`)
+        }
       }
 
+      // ✅ FIX: Clean date format - remove Japanese day-of-week
+      let requestDate = String(row['請求日付'] || '').trim()
+      // Remove (月), (火), (水), (木), (金), (土), (日) from dates
+      requestDate = requestDate.replace(/\([月火水木金土日]\)/, '')
+
       const masterRow = createMasterRow({
-        vendor: customerName,
-        site: row['振込銀行名'] || '',
-        date: formatDate(row['請求日付'] || ''),
+        vendor: 'ナンセイ', // ✅ FIXED: Use actual vendor name, not customer
+        site: row['振込銀行名'] || customerName, // Use bank or customer as site
+        date: formatDate(requestDate), // ✅ Now properly cleaned
         item: '請求',
         qty: '1',
         unit: '式',

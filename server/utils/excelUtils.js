@@ -52,8 +52,8 @@ const VENDOR_SYSTEM_IDS = {
   大萬: '564361',
   '株式会社　大萬': '564361',
   '株式会社 大萬': '564361',
-  髙菱管理: '調整中',
-  高菱管理: '調整中',
+  髙菱管理: '632782',
+  高菱管理: '632782',
   オメガジャパン: '598454',
   オメガジャパン株式会社: '598454',
   ナカザワ建販: '566232',
@@ -85,8 +85,10 @@ const VENDOR_INVOICE_NAMES = {
   '㈱ナンセイ': '㈱ナンセイ',
   北恵株式会社: '北恵株式会社',
   北恵: '北恵株式会社',
-  髙菱管理: '高菱管理',
-  高菱管理: '高菱管理',
+  髙菱管理: '高菱管理株式会社',
+  高菱管理: '高菱管理株式会社',
+  高菱管理株式会社: '高菱管理株式会社',
+  髙菱管理株式会社: '高菱管理株式会社',
 }
 
 const ANDPAD_DEFAULTS = {
@@ -652,7 +654,7 @@ function addInvoiceTotalsToRows(rows) {
 function formatDate(dateStr) {
   if (!dateStr) return ''
   dateStr = String(dateStr).trim()
-
+  dateStr = dateStr.replace(/\([月火水木金土日]\)/g, '')
   if (dateStr.match(/^\d{4}\/\d{2}\/\d{2}$/)) return dateStr
 
   if (dateStr.match(/^\d{4}\/\d{1,2}\/\d{1,2}$/)) {

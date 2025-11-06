@@ -1,5 +1,5 @@
 // ============================================
-// TAKABISHI PARSER - UPDATED WITH 案件管理ID EXTRACTION
+// TAKABISHI PARSER - FIXED FOR ACTUAL COLUMN STRUCTURE
 // ============================================
 const BaseParser = require('./baseParser')
 const { createMasterRow, cleanNumber, formatDate } = require('../excelUtils')
@@ -13,210 +13,169 @@ class TakabishiParser extends BaseParser {
     this.logStart(csvData)
     const results = []
 
-    // Extract metadata from early rows
-    const metadata = this.extractMetadata(csvData, 15)
+    console.log('✓ Parsing Takabishi invoice format (H/M rows)')
 
-    // ✅ Look for 案件管理ID in header (first 15 rows)
+    // Debug: Show first row structure
+    if (csvData.length > 0) {
+      const firstRow = csvData[0]
+      console.log('First row columns:', Object.keys(firstRow).slice(0, 10))
+      console.log('Row type column value:', firstRow[''])
+      console.log('H column value:', firstRow['H'])
+    }
+
+    // Extract default 案件管理ID from header if exists
     let defaultProjectId = ''
-    for (let i = 0; i < Math.min(csvData.length, 15); i++) {
+    for (let i = 0; i < Math.min(csvData.length, 10); i++) {
       const row = csvData[i]
-      const values = Object.values(row)
-      const rowText = values.join('|')
 
-      if (
-        rowText.includes('案件管理ID') ||
-        rowText.includes('工事番号') ||
-        rowText.includes('現場No') ||
-        rowText.includes('物件No')
-      ) {
-        console.log(`✓ Found project ID keyword in row ${i}`)
-
-        for (const val of values) {
-          const cleaned = String(val).trim()
-          if (
-            cleaned &&
-            cleaned.length > 0 &&
-            cleaned !== '案件管理ID' &&
-            cleaned !== '工事番号' &&
-            cleaned !== '現場No' &&
-            cleaned !== '物件No'
-          ) {
-            if (
-              !cleaned.match(/^\d{4}\/\d{1,2}\/\d{1,2}$/) &&
-              !cleaned.includes('請求') &&
-              !cleaned.includes('株式会社') &&
-              !cleaned.includes('TEL')
-            ) {
-              defaultProjectId = cleaned
-              console.log(`✅ Found 案件管理ID in header: ${defaultProjectId}`)
-              break
-            }
-          }
+      // Check for project ID columns
+      if (row['案件管理ID']) {
+        const id = String(row['案件管理ID']).trim()
+        if (id && id !== '案件管理ID' && id !== '') {
+          defaultProjectId = id
+          console.log(`✅ Found 案件管理ID in header: ${defaultProjectId}`)
+          break
         }
-
-        if (!defaultProjectId && i + 1 < csvData.length) {
-          const nextRow = csvData[i + 1]
-          const nextValues = Object.values(nextRow)
-          for (const val of nextValues) {
-            const cleaned = String(val).trim()
-            if (
-              cleaned &&
-              cleaned.length > 0 &&
-              !cleaned.match(/^\d{4}\/\d{1,2}\/\d{1,2}$/)
-            ) {
-              defaultProjectId = cleaned
-              console.log(
-                `✅ Found 案件管理ID in next row: ${defaultProjectId}`
-              )
-              break
-            }
-          }
-        }
-
-        if (defaultProjectId) break
-      }
-
-      // Check column data
-      if (
-        row['案件管理ID'] &&
-        String(row['案件管理ID']).trim() !== '案件管理ID'
-      ) {
-        defaultProjectId = String(row['案件管理ID']).trim()
-        console.log(`✅ Found 案件管理ID in column: ${defaultProjectId}`)
-        break
-      }
-      if (row['工事番号'] && String(row['工事番号']).trim() !== '工事番号') {
-        defaultProjectId = String(row['工事番号']).trim()
-        console.log(`✅ Found 工事番号 in column: ${defaultProjectId}`)
-        break
       }
     }
 
     if (!defaultProjectId) {
       console.warn('⚠️ WARNING: 案件管理ID not found in CSV header')
-      console.warn('⚠️ Will check each data row for 案件管理ID column')
     }
 
-    // Find data start by looking for header patterns
-    const headerPatterns = ['品名', '金額', '数量', '単価']
-    let dataStartIndex = this.findDataStart(csvData, headerPatterns, 20)
+    // Group rows by invoice (H rows)
+    const invoiceGroups = []
+    let currentInvoice = null
 
-    if (dataStartIndex === -1) {
-      dataStartIndex = 10
-      console.log('⚠️ Header not found, using fallback start index')
-    }
-
-    console.log(`Starting data processing from row ${dataStartIndex}`)
-
-    // Process data rows
-    for (let i = dataStartIndex; i < csvData.length; i++) {
+    for (let i = 0; i < csvData.length; i++) {
       const row = csvData[i]
-      const values = Object.values(row).map(v => String(v || '').trim())
 
-      // Skip empty rows
-      if (values.every(v => !v)) {
+      // ✅ CRITICAL FIX: The row type is in the EMPTY STRING column, not 'H'
+      const rowType = String(row[''] || '').trim()
+      const hColumn = String(row['H'] || '').trim()
+
+      // Debug first few rows
+      if (i < 5) {
+        console.log(`Row ${i}: rowType="${rowType}", H="${hColumn}"`)
+      }
+
+      // Skip completely empty rows
+      if (!rowType && !hColumn) {
         this.skippedCount++
         continue
       }
 
-      const firstCol = values[0] || ''
+      // Check if this is a header row (invoice summary)
+      // The actual row type indicator is in the empty string column
+      // and should be "INV" or the H column should be "H"
+      if (rowType === 'INV' || hColumn === 'H') {
+        // Header row - contains invoice summary
+        if (currentInvoice) {
+          invoiceGroups.push(currentInvoice)
+        }
 
-      // Skip summary/header rows
-      if (this.shouldSkipRow(firstCol)) {
-        console.log(`Skipping row ${i}: ${firstCol}`)
-        this.skippedCount++
-        continue
+        currentInvoice = {
+          header: row,
+          details: [],
+          rowIndex: i
+        }
+
+        console.log(`✓ Found invoice header at row ${i}`)
+      } else if (hColumn === 'M' && currentInvoice) {
+        // Detail row - belongs to current invoice
+        currentInvoice.details.push(row)
+      }
+    }
+
+    // Add last invoice
+    if (currentInvoice) {
+      invoiceGroups.push(currentInvoice)
+    }
+
+    console.log(`✓ Found ${invoiceGroups.length} invoice groups`)
+
+    if (invoiceGroups.length === 0) {
+      console.error('❌ No invoice groups found')
+      console.error('This might indicate a CSV parsing or structure issue')
+    }
+
+    // Process each invoice group
+    for (let groupIndex = 0; groupIndex < invoiceGroups.length; groupIndex++) {
+      const invoice = invoiceGroups[groupIndex]
+      const header = invoice.header
+
+      // Debug: Show header structure
+      if (groupIndex === 0) {
+        console.log('\nHeader row structure:')
+        console.log('  請求日付:', header['請求日付'])
+        console.log('  得意先番号:', header['得意先番号'])
+        console.log('  配置先番号:', header['配置先番号'])
+        console.log('  請求金額:', header['請求金額'])
+        console.log('  消費税:', header['消費税'])
+        console.log('  請求合計:', header['請求合計'])
       }
 
-      // Extract item name and amount
-      let itemName = ''
-      let amount = ''
-      let qty = '1'
-      let unit = ''
-      let price = ''
-      let site = metadata.siteName || ''
-      let date = metadata.invoiceDate || ''
+      // Extract header data
+      const invoiceDate = this.parseDate(header['請求日付'] || header['請求日'])
+      const customerNumber = String(header['得意先番号'] || '').trim()
+      const placementNumber = String(header['配置先番号'] || '').trim()
+      const invoiceAmount = cleanNumber(header['請求金額'] || '0')
+      const taxAmount = cleanNumber(header['消費税'] || header['外税'] || '0')
+      const totalAmount = cleanNumber(header['請求合計'] || '0')
 
-      // Try to find amount (usually last numeric column)
-      for (let j = values.length - 1; j >= 0; j--) {
-        const cleanAmt = cleanNumber(values[j])
-        if (cleanAmt && cleanAmt !== '0') {
-          amount = values[j]
-          break
+      // Calculate tax-excluded amount
+      let amountExcludingTax = invoiceAmount
+      if (!amountExcludingTax || amountExcludingTax === '0') {
+        // If 請求金額 is missing, calculate from total - tax
+        if (totalAmount && taxAmount) {
+          const total = parseFloat(totalAmount)
+          const tax = parseFloat(taxAmount)
+          amountExcludingTax = String(total - tax)
         }
       }
 
-      if (!amount) {
+      if (!amountExcludingTax || amountExcludingTax === '0') {
+        console.log(`⊘ Skipping invoice group ${groupIndex + 1}: No amount (請求金額: ${invoiceAmount}, 消費税: ${taxAmount}, 請求合計: ${totalAmount})`)
         this.skippedCount++
         continue
       }
 
-      // Find item name (usually longest text field)
-      for (const val of values) {
-        if (val && val.length > 2 && !val.match(/^\d+$/)) {
-          if (!itemName || val.length > itemName.length) {
-            itemName = val
-          }
-        }
+      // Extract project ID from header or details
+      let projectId = defaultProjectId
+
+      // Check header for project ID
+      if (header['案件管理ID']) {
+        projectId = String(header['案件管理ID']).trim()
+      } else if (header['工事番号']) {
+        projectId = String(header['工事番号']).trim()
       }
 
-      if (!itemName) {
-        this.skippedCount++
-        continue
+      // If still no project ID, use customer/placement combo
+      if (!projectId) {
+        projectId = `CUST${customerNumber}_PLACE${placementNumber}`
+        console.log(`⚠️ No 案件管理ID found, using generated ID: ${projectId}`)
       }
 
-      const cleanAmount = cleanNumber(amount)
-      if (!cleanAmount || cleanAmount === '0') {
-        this.skippedCount++
-        continue
-      }
+      // Create site name from customer and placement numbers
+      const siteName = `得意先${customerNumber}_配置先${placementNumber}`
 
-      console.log(`✓ Processing row ${i}: ${itemName} - ¥${cleanAmount}`)
+      // Invoice description
+      const itemDescription = `高菱管理 ${this.formatDateForDisplay(invoiceDate)} 請求分`
 
-      // ✅ CRITICAL: Extract 案件管理ID from row
-      let rowProjectId = ''
-      if (row['案件管理ID']) {
-        rowProjectId = String(row['案件管理ID']).trim()
-      } else if (row['工事番号']) {
-        rowProjectId = String(row['工事番号']).trim()
-      } else if (row['現場No']) {
-        rowProjectId = String(row['現場No']).trim()
-      } else if (row['物件No']) {
-        rowProjectId = String(row['物件No']).trim()
-      }
-
-      // Priority: row > header > error
-      let finalProjectId = ''
-      if (rowProjectId) {
-        finalProjectId = rowProjectId
-        if (i < dataStartIndex + 3) {
-          console.log(`  ✅ Using 案件管理ID from row: ${finalProjectId}`)
-        }
-      } else if (defaultProjectId) {
-        finalProjectId = defaultProjectId
-        if (i < dataStartIndex + 3) {
-          console.log(`  ✅ Using 案件管理ID from header: ${finalProjectId}`)
-        }
-      } else {
-        finalProjectId = `MISSING_ID_${site || 'UNKNOWN'}_ROW${i}`.replace(
-          /\s+/g,
-          '_'
-        )
-        console.error(`  ❌ ERROR Row ${i}: No 案件管理ID in CSV`)
-      }
+      console.log(`✓ Processing invoice ${groupIndex + 1}: ¥${amountExcludingTax} (${invoice.details.length} detail rows)`)
 
       const masterRow = createMasterRow({
         vendor: '高菱管理',
-        site: site,
-        date: formatDate(date),
-        item: itemName,
-        qty: qty,
-        unit: unit || '式',
-        price: price || cleanAmount,
-        amount: cleanAmount,
-        workNo: '',
-        remarks: '',
-        projectId: finalProjectId, // ✅ From CSV
+        site: siteName,
+        date: invoiceDate,
+        item: itemDescription,
+        qty: '1',
+        unit: '式',
+        price: amountExcludingTax,
+        amount: amountExcludingTax,
+        workNo: customerNumber,
+        remarks: `配置先:${placementNumber}`,
+        projectId: projectId,
         result: '承認',
       })
 
@@ -229,27 +188,43 @@ class TakabishiParser extends BaseParser {
     return results
   }
 
-  shouldSkipRow(firstCol) {
-    if (!firstCol) return false
+  /**
+   * Parse date from YYYYMMDD format to YYYY/MM/DD
+   */
+  parseDate(dateStr) {
+    if (!dateStr) return ''
 
-    const skipPatterns = [
-      '合計',
-      '小計',
-      '消費税',
-      '請求書',
-      '株式会社',
-      '御中',
-      'TEL',
-      'FAX',
-      '〒',
-      '振込先',
-      '登録番号',
-      '品名',
-      '金額',
-      '数量',
-    ]
+    const cleaned = String(dateStr).trim()
 
-    return skipPatterns.some(pattern => firstCol.includes(pattern))
+    // Format: YYYYMMDD (e.g., "20250801")
+    if (cleaned.match(/^\d{8}$/)) {
+      const year = cleaned.substring(0, 4)
+      const month = cleaned.substring(4, 6)
+      const day = cleaned.substring(6, 8)
+      return `${year}/${month}/${day}`
+    }
+
+    // Already formatted
+    if (cleaned.match(/^\d{4}\/\d{2}\/\d{2}$/)) {
+      return cleaned
+    }
+
+    return cleaned
+  }
+
+  /**
+   * Format date for display in item description
+   */
+  formatDateForDisplay(dateStr) {
+    if (!dateStr) return ''
+
+    // Extract YYYY年MM月 from YYYY/MM/DD
+    const match = dateStr.match(/^(\d{4})\/(\d{2})/)
+    if (match) {
+      return `${match[1]}年${match[2]}月`
+    }
+
+    return dateStr
   }
 }
 
