@@ -1,5 +1,5 @@
 // ============================================
-// EXCEL UTILITIES - COMPLETE FIXED VERSION
+// EXCEL UTILITIES - COMPLETE FIXED VERSION WITH PROJECT ID HANDLING
 // ============================================
 
 const MASTER_COLUMNS = [
@@ -23,8 +23,6 @@ const MASTER_COLUMNS = [
   '金額(税込)',
   '工事種類',
   '課税フラグ',
-  '請求納品明細備考',
-  '結果',
 ]
 
 // PURCHASE PROJECT COLUMNS (仕入案件作成)
@@ -45,18 +43,52 @@ const PURCHASE_PROJECT_COLUMNS = [
 // VENDOR SYSTEM IDS - CRITICAL: These must match ANDPAD master exactly
 const VENDOR_SYSTEM_IDS = {
   クリーン産業: '599239',
+  株式会社クリーン産業: '599239',
   三高産業: '563866',
+  '株式会社　三高産業': '563866',
+  '株式会社 三高産業': '563866',
   北恵株式会社: '563913',
+  北恵: '563913',
   ナンセイ: '563829',
+  '㈱ナンセイ': '563829',
   大萬: '564361',
+  '株式会社　大萬': '564361',
+  '株式会社 大萬': '564361',
   髙菱管理: '調整中',
   高菱管理: '調整中',
   オメガジャパン: '598454',
+  オメガジャパン株式会社: '598454',
   ナカザワ建販: '566232',
+  ナカザワ建販株式会社: '566232',
   トキワシステム: '598417',
+  '㈱トキワシステム': '598417',
   ALLAGI株式会社: 'ALLAGI01',
   ALLAGI: 'ALLAGI01',
   'ＡＬＬＡＧＩ㈱': 'ALLAGI01',
+}
+
+// VENDOR INVOICE NAME FORMATS - Based on requirements
+const VENDOR_INVOICE_NAMES = {
+  トキワシステム: '㈱トキワシステム',
+  '㈱トキワシステム': '㈱トキワシステム',
+  オメガジャパン: 'オメガジャパン株式会社',
+  オメガジャパン株式会社: 'オメガジャパン株式会社',
+  ナカザワ建販: 'ナカザワ建販株式会社',
+  ナカザワ建販株式会社: 'ナカザワ建販株式会社',
+  大萬: '株式会社 大萬',
+  '株式会社　大萬': '株式会社 大萬',
+  '株式会社 大萬': '株式会社 大萬',
+  三高産業: '株式会社 三高産業',
+  '株式会社　三高産業': '株式会社 三高産業',
+  '株式会社 三高産業': '株式会社 三高産業',
+  クリーン産業: '株式会社クリーン産業',
+  株式会社クリーン産業: '株式会社クリーン産業',
+  ナンセイ: '㈱ナンセイ',
+  '㈱ナンセイ': '㈱ナンセイ',
+  北恵株式会社: '北恵株式会社',
+  北恵: '北恵株式会社',
+  髙菱管理: '高菱管理',
+  高菱管理: '高菱管理',
 }
 
 const ANDPAD_DEFAULTS = {
@@ -79,15 +111,19 @@ function getVendorSystemId(vendorName) {
   return systemId
 }
 
-// FIXED: Format is YYYYMMDDNNN (3-digit sequence with leading zeros)
+// FIXED: Format is K + YYYYMMDD (last day of LAST month) + _NNN (3-digit sequence)
 function generateInvoiceManagementId(sequenceNumber = 1) {
   const today = new Date()
-  const year = today.getFullYear()
-  const month = String(today.getMonth() + 1).padStart(2, '0')
-  const day = String(today.getDate()).padStart(2, '0')
+
+  // Get last day of last month
+  const lastDayOfLastMonth = new Date(today.getFullYear(), today.getMonth(), 0)
+
+  const year = lastDayOfLastMonth.getFullYear()
+  const month = String(lastDayOfLastMonth.getMonth() + 1).padStart(2, '0')
+  const day = String(lastDayOfLastMonth.getDate()).padStart(2, '0')
   const seq = String(sequenceNumber).padStart(3, '0')
 
-  return `${year}${month}${day}${seq}`
+  return `K${year}${month}${day}_${seq}`
 }
 
 function generateProjectId() {
@@ -115,7 +151,7 @@ function getProjectIdForSite(vendorName, siteName) {
   return newProjectId
 }
 
-// FIXED: Invoice name format YYYYMM業者名_請求書
+// FIXED: Invoice name format YYYYMM_業者名_請求書 (with underscores!)
 function generateInvoiceName(vendorName, invoiceDate = null) {
   let year, month
 
@@ -135,8 +171,18 @@ function generateInvoiceName(vendorName, invoiceDate = null) {
     month = String(today.getMonth() + 1).padStart(2, '0')
   }
 
-  return `${year}${month}${vendorName}_請求書`
+  const displayName = VENDOR_INVOICE_NAMES[vendorName] || vendorName
+
+  return `${year}${month}_${displayName}_請求書`
 }
+
+// ============================================
+// CRITICAL FIX: createMasterRow with proper 案件管理ID handling
+// ============================================
+// ============================================
+// UPDATED createMasterRow FUNCTION
+// Place this in excelUtils.js to replace the existing function
+// ============================================
 
 function createMasterRow(data) {
   const row = {}
@@ -163,20 +209,33 @@ function createMasterRow(data) {
   const siteName = String(data.site || '').trim()
   const providedProjectId = String(data.projectId || '').trim()
 
-  if (providedProjectId) {
+  // ============================================
+  // CRITICAL: ALWAYS use provided 案件管理ID from source CSV
+  // Rule: "原本CSVの案件管理IDを入力"
+  // Rule: "同じ案件管理IDのものはインポート後に1行に情報を集約"
+  // ============================================
+  if (providedProjectId && providedProjectId !== '') {
     row['案件管理ID'] = providedProjectId
+
+    // Only log for non-MISSING IDs
+    if (!providedProjectId.startsWith('MISSING_ID_')) {
+      // Success - using CSV data
+    }
   } else {
-    row['案件管理ID'] = getProjectIdForSite(vendorName, siteName)
-    console.warn(
-      `⚠️ 案件管理ID not provided, auto-generated: ${row['案件管理ID']}`
-    )
+    // ❌ This should RARELY happen - log as error
+    console.error(`❌ ERROR: No 案件管理ID provided for vendor "${vendorName}"`)
+    console.error(`   Site: "${siteName}"`)
+    console.error(`   This violates the rule: "原本CSVの案件管理IDを入力"`)
+    console.error(`   The source CSV MUST contain 案件管理ID column or header`)
+
+    // Emergency fallback only - clearly marked
+    row['案件管理ID'] = `ERROR_NO_ID_${siteName.replace(/\s+/g, '_')}`
   }
 
   row['現場監督'] = ANDPAD_DEFAULTS.現場監督
 
   row['納品実績日'] = formatDate(invoiceDate)
 
-  // FIXED: Payment due date calculation - end of next month
   row['支払予定日'] = calculatePaymentDueDate(invoiceDate)
 
   row['請求納品明細名'] = invoiceName
@@ -201,17 +260,7 @@ function createMasterRow(data) {
 
   row['課税フラグ'] = '課税'
 
-  row['請求納品明細備考'] = String(data.workNo || '').trim()
-
-  if (data.remarks) {
-    const currentRemarks = row['請求納品明細備考']
-    row['請求納品明細備考'] = currentRemarks
-      ? `${currentRemarks} ${data.remarks}`
-      : data.remarks
-  }
-
-  row['結果'] = ''
-
+  // Metadata fields for consolidation
   row['_siteName'] = siteName
   row['_itemName'] = data.item || ''
   row['_vendorName'] = vendorName
@@ -277,8 +326,27 @@ function calculatePaymentDueDate(invoiceDate) {
 }
 
 function determineConstructionType(itemDescription, vendorName) {
-  if (vendorName === 'クリーン産業' || vendorName.includes('クリーン')) {
+  if (
+    vendorName === 'クリーン産業' ||
+    vendorName === '株式会社クリーン産業' ||
+    vendorName.includes('クリーン')
+  ) {
     return 'その他'
+  }
+
+  if (vendorName === 'ナンセイ' || vendorName === '㈱ナンセイ') {
+    return 'その他'
+  }
+
+  if (
+    vendorName === 'オメガジャパン' ||
+    vendorName === 'オメガジャパン株式会社'
+  ) {
+    return '建材'
+  }
+
+  if (vendorName === 'ナカザワ建販' || vendorName === 'ナカザワ建販株式会社') {
+    return '建材'
   }
 
   const buildingMaterialKeywords = [
@@ -354,7 +422,11 @@ function determineConstructionType(itemDescription, vendorName) {
 
 // CRITICAL: Apply vendor-specific rules (大萬 1% discount)
 function applyVendorSpecificRules(rows, vendorName) {
-  if (vendorName === '大萬') {
+  if (
+    vendorName === '大萬' ||
+    vendorName === '株式会社　大萬' ||
+    vendorName === '株式会社 大萬'
+  ) {
     console.log('✓ Applying 大萬 1% discount rule')
 
     rows.forEach(row => {
@@ -380,11 +452,6 @@ function applyVendorSpecificRules(rows, vendorName) {
           discountedInvoiceAmount * 1.1
         ).toString()
       }
-
-      const currentRemarks = row['請求納品明細備考']
-      row['請求納品明細備考'] = currentRemarks
-        ? `${currentRemarks} [1%割引適用]`
-        : '[1%割引適用]'
     })
   }
 
@@ -416,7 +483,8 @@ function validateTotals(rows, vendorName) {
     const totalAmountExcluded = parseFloat(row['金額(税抜)']) || 0
 
     const difference = Math.abs(invoiceAmountExcluded - totalAmountExcluded)
-    const percentDiff = (difference / totalAmountExcluded) * 100
+    const percentDiff =
+      totalAmountExcluded > 0 ? (difference / totalAmountExcluded) * 100 : 0
 
     if (percentDiff > 1) {
       console.warn(`⚠️ Row ${index}: Total mismatch > 1% for ${vendorName}`)
@@ -427,12 +495,17 @@ function validateTotals(rows, vendorName) {
   })
 }
 
+// ============================================
+// CRITICAL FIX: consolidateByProjectId
+// Rule: "同じ案件管理IDのものはインポート後に1行に情報を集約"
+// ============================================
 function consolidateByProjectId(rows) {
   if (!rows || rows.length === 0) return rows
 
-  console.log('\n=== CONSOLIDATING ROWS BY PROJECT ID ===')
+  console.log('\n=== CONSOLIDATING ROWS BY 案件管理ID ===')
   console.log(`Input: ${rows.length} rows`)
 
+  // Group by 案件管理ID (the actual project ID from source)
   const projectGroups = {}
 
   rows.forEach(row => {
@@ -443,7 +516,9 @@ function consolidateByProjectId(rows) {
     projectGroups[projectId].push(row)
   })
 
-  console.log(`Found ${Object.keys(projectGroups).length} unique project IDs`)
+  console.log(
+    `Found ${Object.keys(projectGroups).length} unique 案件管理ID values`
+  )
 
   const consolidatedRows = []
   let consolidatedSequence = 1
@@ -451,7 +526,7 @@ function consolidateByProjectId(rows) {
   Object.keys(projectGroups).forEach(projectId => {
     const groupRows = projectGroups[projectId]
 
-    console.log(`\n📋 Project ID: ${projectId}`)
+    console.log(`\n📋 案件管理ID: ${projectId}`)
     console.log(`   Items to consolidate: ${groupRows.length}`)
 
     const consolidatedRow = { ...groupRows[0] }
@@ -460,7 +535,6 @@ function consolidateByProjectId(rows) {
     let totalAmountIncluded = 0
 
     const itemNames = []
-    const remarks = []
 
     const metadataInvoiceDate = groupRows[0]['_invoiceDate'] || ''
 
@@ -474,16 +548,17 @@ function consolidateByProjectId(rows) {
       if (row['_itemName']) {
         itemNames.push(row['_itemName'])
       }
-
-      if (row['請求納品明細備考']) {
-        remarks.push(row['請求納品明細備考'])
-      }
     })
 
+    // Generate new 請求管理ID for consolidated row
     consolidatedRow['請求管理ID'] = generateInvoiceManagementId(
       consolidatedSequence++
     )
     console.log(`   ✓ New 請求管理ID: ${consolidatedRow['請求管理ID']}`)
+
+    // CRITICAL: Keep the original 案件管理ID from source CSV
+    consolidatedRow['案件管理ID'] = projectId
+    console.log(`   ✓ Keeping original 案件管理ID: ${projectId}`)
 
     consolidatedRow['請求納品金額(税抜)'] = totalAmountExcluded.toString()
     consolidatedRow['請求納品金額(税込)'] = totalAmountIncluded.toString()
@@ -512,13 +587,14 @@ function consolidateByProjectId(rows) {
       console.log(`   ✓ Using metadata date: ${consolidatedRow['納品実績日']}`)
     }
 
-    const uniqueRemarks = [...new Set(remarks.filter(r => r))]
-    consolidatedRow['請求納品明細備考'] = uniqueRemarks.join('; ')
-
     console.log(
       `   ✓ Consolidated total: ¥${totalAmountExcluded} (tax-excluded)`
     )
-    console.log(`   ✓ Items: ${itemNames.join(', ')}`)
+    console.log(
+      `   ✓ Items: ${itemNames.slice(0, 5).join(', ')}${
+        itemNames.length > 5 ? '...' : ''
+      }`
+    )
 
     consolidatedRows.push(consolidatedRow)
   })
@@ -566,12 +642,14 @@ function addInvoiceTotalsToRows(rows) {
     })
   })
 
+  // Consolidate by 案件管理ID
   const consolidatedRows = consolidateByProjectId(rows)
 
   // Validate totals after consolidation
   const vendorName = consolidatedRows[0]?._vendorName || 'Unknown'
   validateTotals(consolidatedRows, vendorName)
 
+  // Clean up temporary fields
   consolidatedRows.forEach(row => {
     delete row['_siteName']
     delete row['_itemName']
@@ -674,16 +752,15 @@ function calculateUnitPrice(amount, quantity) {
 
 function setColumnWidths(worksheet, columns) {
   worksheet['!cols'] = columns.map(col => {
-    if (col.includes('管理ID')) return { wch: 15 }
+    if (col.includes('管理ID')) return { wch: 18 }
     if (col.includes('取引先')) return { wch: 12 }
-    if (col.includes('請求名')) return { wch: 35 }
-    if (col.includes('案件管理ID')) return { wch: 18 }
-    if (col.includes('明細名')) return { wch: 35 }
+    if (col.includes('請求名')) return { wch: 40 }
+    if (col.includes('案件管理ID')) return { wch: 20 }
+    if (col.includes('明細名')) return { wch: 40 }
     if (col.includes('担当者') || col.includes('監督')) return { wch: 12 }
-    if (col.includes('日')) return { wch: 12 }
-    if (col.includes('金額') || col.includes('単価')) return { wch: 12 }
-    if (col.includes('備考')) return { wch: 30 }
-    return { wch: 10 }
+    if (col.includes('日')) return { wch: 14 }
+    if (col.includes('金額') || col.includes('単価')) return { wch: 14 }
+    return { wch: 12 }
   })
 }
 
@@ -697,6 +774,7 @@ module.exports = {
   MASTER_COLUMNS,
   PURCHASE_PROJECT_COLUMNS,
   VENDOR_SYSTEM_IDS,
+  VENDOR_INVOICE_NAMES,
   ANDPAD_DEFAULTS,
   createMasterRow,
   createPurchaseProjectRow,

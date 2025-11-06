@@ -21,12 +21,14 @@ class CleanIndustryParser extends BaseParser {
       clientName: 'ALLAGI株式会社',
       invoiceDate: '',
       siteName: '',
+      projectId: '', // Will be extracted from CSV
     }
 
-    // CRITICAL: Collect all dates from header for smart detection
     const headerDates = []
 
-    // Extract metadata from header rows
+    // ============================================
+    // EXTRACT METADATA INCLUDING 案件管理ID
+    // ============================================
     for (let i = 0; i < Math.min(csvData.length, 15); i++) {
       const row = csvData[i]
       const values = Object.values(row)
@@ -36,8 +38,70 @@ class CleanIndustryParser extends BaseParser {
         metadata.clientName = 'ALLAGI株式会社'
       }
 
+      // ✅ CRITICAL: Extract 案件管理ID from header
+      if (
+        rowText.includes('案件管理ID') ||
+        rowText.includes('工事番号') ||
+        rowText.includes('現場No') ||
+        rowText.includes('物件No')
+      ) {
+        console.log(`✓ Found row with project ID keyword: Row ${i}`)
+
+        // Look for ID in the same row or next row
+        for (const val of values) {
+          const cleaned = String(val).trim()
+          if (
+            cleaned &&
+            cleaned.length > 0 &&
+            cleaned !== '案件管理ID' &&
+            cleaned !== '工事番号' &&
+            cleaned !== '現場No' &&
+            cleaned !== '物件No'
+          ) {
+            // Check if it looks like a project ID (not a date or other metadata)
+            if (
+              !cleaned.match(/^\d{4}\/\d{1,2}\/\d{1,2}$/) &&
+              !cleaned.includes('請求') &&
+              !cleaned.includes('株式会社') &&
+              !cleaned.includes('ALLAGI') &&
+              !cleaned.includes('TEL') &&
+              !cleaned.includes('FAX')
+            ) {
+              metadata.projectId = cleaned
+              console.log(
+                `✅ Found 案件管理ID in header: ${metadata.projectId}`
+              )
+              break
+            }
+          }
+        }
+
+        // Also check next row
+        if (!metadata.projectId && i + 1 < csvData.length) {
+          const nextRow = csvData[i + 1]
+          const nextValues = Object.values(nextRow)
+          for (const val of nextValues) {
+            const cleaned = String(val).trim()
+            if (cleaned && cleaned.length > 0) {
+              if (
+                !cleaned.match(/^\d{4}\/\d{1,2}\/\d{1,2}$/) &&
+                !cleaned.includes('請求') &&
+                !cleaned.includes('株式会社')
+              ) {
+                metadata.projectId = cleaned
+                console.log(
+                  `✅ Found 案件管理ID in next row: ${metadata.projectId}`
+                )
+                break
+              }
+            }
+          }
+        }
+
+        if (metadata.projectId) break
+      }
+
       // PRIORITY 1: Look for invoice date with context keywords
-      // Check if this row contains the keyword
       if (
         rowText.includes('請求年月日') ||
         rowText.includes('請求日') ||
@@ -45,7 +109,7 @@ class CleanIndustryParser extends BaseParser {
       ) {
         console.log(`✓ Found row with invoice date keyword: Row ${i}`)
 
-        // Look for date in the NEXT row (common Japanese invoice format)
+        // Look for date in the NEXT row
         if (i + 1 < csvData.length) {
           const nextRow = csvData[i + 1]
           const nextValues = Object.values(nextRow)
@@ -154,20 +218,14 @@ class CleanIndustryParser extends BaseParser {
 
     // SMART DETECTION: Determine correct invoice date
     if (!metadata.invoiceDate) {
-      // PRIORITY 2: Use LATEST header date (likely the invoice date, not transaction dates)
       if (headerDates.length > 0) {
-        // Remove duplicate dates and sort
         const uniqueDates = [...new Set(headerDates)].sort()
-        // For Japanese invoices, the invoice date is typically at the END of the billing period
-        // So use the LATEST date from header (not earliest)
         metadata.invoiceDate = uniqueDates[uniqueDates.length - 1]
         console.log(
           `✓ Using latest header date as invoice date: ${metadata.invoiceDate}`
         )
         console.log(`  (Other header dates: ${uniqueDates.join(', ')})`)
-      }
-      // PRIORITY 3: Use latest transaction date
-      else if (transactionDates.length > 0) {
+      } else if (transactionDates.length > 0) {
         const uniqueTransDates = [...new Set(transactionDates)].sort()
         metadata.invoiceDate = uniqueTransDates[uniqueTransDates.length - 1]
         console.log(
@@ -188,8 +246,13 @@ class CleanIndustryParser extends BaseParser {
 
     console.log('Final metadata:', metadata)
 
-    // クリーン産業 CSV format (based on logs):
-    // Column positions: [0:業者名, 1:現場名, 2:月日, 3:売上No, 4:品名, 5:数量, 6:単位, 7:単価, 8:小計, 9:消費税, 10:金額]
+    // ✅ CRITICAL: Check if projectId was found in header
+    if (!metadata.projectId) {
+      console.warn('⚠️ WARNING: 案件管理ID not found in CSV header')
+      console.warn(
+        '⚠️ Each row MUST have its own 案件管理ID column, or one will be auto-generated per site'
+      )
+    }
 
     // Process data rows (Second pass: actual processing)
     for (let i = dataStartIndex; i < csvData.length; i++) {
@@ -234,7 +297,7 @@ class CleanIndustryParser extends BaseParser {
         continue
       }
 
-      // Must have item name and it must be meaningful (not just vendor name)
+      // Must have item name and it must be meaningful
       if (!itemName || itemName.length < 2) {
         console.log(`Row ${i}: No item name, skipping`)
         this.skippedCount++
@@ -277,10 +340,40 @@ class CleanIndustryParser extends BaseParser {
         `✓ Processing row ${i}: Site="${siteName}" Item="${itemName}" SalesNo="${salesNo}" Qty="${cleanQty}" Unit="${unit}" - ${cleanQty}${unit} × ¥${finalUnitPrice} = ¥${cleanAmount}`
       )
 
+      // ✅ CRITICAL: Check for row-specific 案件管理ID in CSV columns
+      let rowProjectId = ''
+
+      // Check common column names for project ID
+      if (row['案件管理ID']) {
+        rowProjectId = String(row['案件管理ID']).trim()
+      } else if (row['工事番号']) {
+        rowProjectId = String(row['工事番号']).trim()
+      } else if (row['現場No']) {
+        rowProjectId = String(row['現場No']).trim()
+      } else if (row['物件No']) {
+        rowProjectId = String(row['物件No']).trim()
+      }
+
+      // Use priority: row-specific > header metadata > generate by site
+      let finalProjectId = ''
+      if (rowProjectId) {
+        finalProjectId = rowProjectId
+        console.log(`  ✅ Using 案件管理ID from row: ${finalProjectId}`)
+      } else if (metadata.projectId) {
+        finalProjectId = metadata.projectId
+        console.log(`  ✅ Using 案件管理ID from header: ${finalProjectId}`)
+      } else {
+        // Fallback: Generate per site (will be same for all items in same site)
+        finalProjectId = `SITE_${siteName.replace(/\s+/g, '_')}`
+        console.warn(
+          `  ⚠️ No 案件管理ID in CSV, using site-based ID: ${finalProjectId}`
+        )
+      }
+
       const masterRow = createMasterRow({
         vendor: 'クリーン産業',
         site: siteName || 'ALLAGI株式会社',
-        date: invoiceDate, // ✅ Always use metadata invoice date
+        date: invoiceDate,
         item: itemName,
         qty: cleanQty,
         unit: unit || '式',
@@ -288,7 +381,7 @@ class CleanIndustryParser extends BaseParser {
         amount: cleanAmount,
         workNo: salesNo,
         remarks: vendorName !== 'ALLAGI株式会社' ? vendorName : '',
-        projectId: '',
+        projectId: finalProjectId, // ✅ Use extracted project ID from CSV
         result: '承認',
       })
 

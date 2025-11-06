@@ -50,6 +50,8 @@ function logTestResults(vendor, csvData, transformedData, stage = 'COMPLETE') {
     console.log(`    支払予定日: ${firstRow['支払予定日']}`)
     console.log(`    請求納品明細名: ${firstRow['請求納品明細名']}`)
     console.log(`    工事種類: ${firstRow['工事種類']}`)
+    console.log(`    数量: ${firstRow['数量']}`)
+    console.log(`    単位: ${firstRow['単位']}`)
   }
 
   console.log('\n💰 FINANCIAL SUMMARY:')
@@ -160,22 +162,54 @@ function logTestResults(vendor, csvData, transformedData, stage = 'COMPLETE') {
     `  [${idFormatCorrect ? '✓' : '✗'}] 請求管理ID format (YYYYMMDDNNN)`
   )
 
-  // Check 10: Invoice name format (YYYYMM業者名_請求書)
+  // Check 10: Invoice name format (YYYYMM_業者名_請求書) - UPDATED FORMAT
   const invoiceNameFormat = transformedData.every(row => {
     const name = row['請求名']
-    return name && name.match(/^\d{6}.*_請求書$/)
+    return name && name.match(/^\d{6}_.*_請求書$/)
   })
   console.log(
     `  [${
       invoiceNameFormat ? '✓' : '✗'
-    }] Invoice name format (YYYYMM業者名_請求書)`
+    }] Invoice name format (YYYYMM_業者名_請求書)`
   )
+
+  // Check 11: 数量 = 1 for consolidated rows
+  const quantityCorrect = transformedData.every(row => row['数量'] === '1')
+  console.log(`  [${quantityCorrect ? '✓' : '✗'}] 数量 = 1 (consolidated)`)
+
+  // Check 12: 単位 = 式 for consolidated rows
+  const unitCorrect = transformedData.every(row => row['単位'] === '式')
+  console.log(`  [${unitCorrect ? '✓' : '✗'}] 単位 = 式 (consolidated)`)
 
   console.log('\n📊 SAMPLE OUTPUT ROWS (First 2):')
   transformedData.slice(0, 2).forEach((row, idx) => {
     console.log(`\n  --- Row ${idx + 1} ---`)
-    MASTER_COLUMNS.forEach(col => {
-      if (row[col]) {
+    // Show only defined columns (no 備考 or 結果)
+    const displayColumns = [
+      '請求管理ID',
+      '取引先',
+      '取引設定',
+      '担当者(発注側)',
+      '請求名',
+      '案件管理ID',
+      '請求納品金額(税抜)',
+      '請求納品金額(税込)',
+      '現場監督',
+      '納品実績日',
+      '支払予定日',
+      '請求納品明細名',
+      '数量',
+      '単位',
+      '単価(税抜)',
+      '単価(税込)',
+      '金額(税抜)',
+      '金額(税込)',
+      '工事種類',
+      '課税フラグ',
+    ]
+
+    displayColumns.forEach(col => {
+      if (row[col] !== undefined && row[col] !== '') {
         console.log(`    ${col}: ${row[col]}`)
       }
     })

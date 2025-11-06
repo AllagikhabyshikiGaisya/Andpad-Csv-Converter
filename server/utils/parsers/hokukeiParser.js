@@ -1,3 +1,6 @@
+// ============================================
+// HOKUKEI PARSER - UPDATED WITH 案件管理ID EXTRACTION
+// ============================================
 const BaseParser = require('./baseParser')
 const { createMasterRow, cleanNumber, formatDate } = require('../excelUtils')
 
@@ -10,11 +13,97 @@ class HokukeiParser extends BaseParser {
     this.logStart(csvData)
     const results = []
 
+    // ✅ Extract 案件管理ID from CSV header (first 15 rows)
+    let defaultProjectId = ''
+    for (let i = 0; i < Math.min(csvData.length, 15); i++) {
+      const row = csvData[i]
+      const values = Object.values(row)
+      const rowText = values.join('|')
+
+      if (
+        rowText.includes('案件管理ID') ||
+        rowText.includes('工事番号') ||
+        rowText.includes('現場No') ||
+        rowText.includes('物件No') ||
+        rowText.includes('現場コード')
+      ) {
+        console.log(`✓ Found project ID keyword in row ${i}`)
+
+        for (const val of values) {
+          const cleaned = String(val).trim()
+          if (
+            cleaned &&
+            cleaned.length > 0 &&
+            cleaned !== '案件管理ID' &&
+            cleaned !== '工事番号' &&
+            cleaned !== '現場No' &&
+            cleaned !== '物件No' &&
+            cleaned !== '現場コード'
+          ) {
+            if (
+              !cleaned.match(/^\d{4}\/\d{1,2}\/\d{1,2}$/) &&
+              !cleaned.includes('請求') &&
+              !cleaned.includes('株式会社') &&
+              !cleaned.includes('TEL') &&
+              !cleaned.includes('FAX')
+            ) {
+              defaultProjectId = cleaned
+              console.log(`✅ Found 案件管理ID in header: ${defaultProjectId}`)
+              break
+            }
+          }
+        }
+
+        if (!defaultProjectId && i + 1 < csvData.length) {
+          const nextRow = csvData[i + 1]
+          const nextValues = Object.values(nextRow)
+          for (const val of nextValues) {
+            const cleaned = String(val).trim()
+            if (
+              cleaned &&
+              cleaned.length > 0 &&
+              !cleaned.match(/^\d{4}\/\d{1,2}\/\d{1,2}$/)
+            ) {
+              defaultProjectId = cleaned
+              console.log(
+                `✅ Found 案件管理ID in next row: ${defaultProjectId}`
+              )
+              break
+            }
+          }
+        }
+
+        if (defaultProjectId) break
+      }
+
+      // Check column-based data
+      if (
+        row['案件管理ID'] &&
+        String(row['案件管理ID']).trim() !== '案件管理ID'
+      ) {
+        defaultProjectId = String(row['案件管理ID']).trim()
+        console.log(`✅ Found 案件管理ID in column: ${defaultProjectId}`)
+        break
+      }
+      if (row['工事番号'] && String(row['工事番号']).trim() !== '工事番号') {
+        defaultProjectId = String(row['工事番号']).trim()
+        console.log(`✅ Found 工事番号 in column: ${defaultProjectId}`)
+        break
+      }
+    }
+
+    if (!defaultProjectId) {
+      console.warn('⚠️ WARNING: 案件管理ID not found in CSV header')
+      console.warn('⚠️ Will check each data row for 案件管理ID column')
+    }
+
+    // Process data rows
     for (let i = 0; i < csvData.length; i++) {
       const row = csvData[i]
 
       const productName = String(row['品名'] || '').trim()
       const salesAmount = String(row['売上金額'] || '').trim()
+      const siteName = String(row['下店名３'] || row['納入先名'] || '').trim()
 
       if (
         !productName ||
@@ -31,18 +120,59 @@ class HokukeiParser extends BaseParser {
         continue
       }
 
+      const makerName = String(row['メーカー名'] || '').trim()
+      const itemCode = String(row['品番'] || '').trim()
+
+      // ✅ CRITICAL: Extract 案件管理ID from row
+      let rowProjectId = ''
+      if (row['案件管理ID']) {
+        rowProjectId = String(row['案件管理ID']).trim()
+      } else if (row['工事番号']) {
+        rowProjectId = String(row['工事番号']).trim()
+      } else if (row['現場コード']) {
+        rowProjectId = String(row['現場コード']).trim()
+      } else if (row['現場No']) {
+        rowProjectId = String(row['現場No']).trim()
+      } else if (row['物件No']) {
+        rowProjectId = String(row['物件No']).trim()
+      }
+
+      // Priority: row > header > error
+      let finalProjectId = ''
+      if (rowProjectId) {
+        finalProjectId = rowProjectId
+        if (i < 5) {
+          console.log(
+            `  ✅ Row ${i}: Using 案件管理ID from row: ${finalProjectId}`
+          )
+        }
+      } else if (defaultProjectId) {
+        finalProjectId = defaultProjectId
+        if (i < 5) {
+          console.log(
+            `  ✅ Row ${i}: Using 案件管理ID from header: ${finalProjectId}`
+          )
+        }
+      } else {
+        finalProjectId = `MISSING_ID_${siteName || 'UNKNOWN'}_ROW${i}`.replace(
+          /\s+/g,
+          '_'
+        )
+        console.error(`  ❌ ERROR Row ${i}: No 案件管理ID in CSV`)
+      }
+
       const masterRow = createMasterRow({
-        vendor: row['得意先名略称'] || '北恵株式会社',
-        site: row['下店名3'] || '',
+        vendor: '北恵株式会社',
+        site: siteName || 'default',
         date: formatDate(row['伝票日付'] || ''),
-        item: `${row['メーカー名'] || ''} ${productName}`,
+        item: `${makerName || ''} ${productName}`.trim(),
         qty: cleanNumber(row['数量'] || '') || '1',
         unit: row['単位名'] || '',
         price: cleanNumber(row['単価'] || ''),
         amount: cleanAmount,
-        workNo: row['品番'] || '',
-        remarks: row['メーカー名'] || '',
-        projectId: '', // Let system generate
+        workNo: itemCode,
+        remarks: makerName || '',
+        projectId: finalProjectId, // ✅ From CSV
         result: '承認',
       })
 

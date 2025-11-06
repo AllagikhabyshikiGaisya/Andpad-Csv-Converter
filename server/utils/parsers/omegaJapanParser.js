@@ -1,3 +1,6 @@
+// ============================================
+// OMEGA JAPAN PARSER - UPDATED WITH 案件管理ID EXTRACTION
+// ============================================
 const BaseParser = require('./baseParser')
 const { createMasterRow, cleanNumber, formatDate } = require('../excelUtils')
 
@@ -18,7 +21,7 @@ class OmegaJapanParser extends BaseParser {
         key &&
         key.length > 2 &&
         !key.startsWith('_') &&
-        !key.match(/^[一二三四五六七八九十]+$/) // Japanese numbers
+        !key.match(/^[一二三四五六七八九]+$/) // Japanese numbers
     )
 
     // Also check if we have proper column names like '品名', '金額', etc.
@@ -45,6 +48,60 @@ class OmegaJapanParser extends BaseParser {
     let siteName = metadata.siteName
     let invoiceDate = metadata.invoiceDate
 
+    // ✅ Extract 案件管理ID from header (first 30 rows)
+    let defaultProjectId = ''
+    for (let i = 0; i < Math.min(csvData.length, 30); i++) {
+      const row = csvData[i]
+      const values = Object.values(row)
+      const rowText = values.join('|')
+
+      if (
+        rowText.includes('案件管理ID') ||
+        rowText.includes('工事番号') ||
+        rowText.includes('現場No') ||
+        rowText.includes('物件No')
+      ) {
+        console.log(`✓ Found project ID keyword in row ${i}`)
+
+        for (const val of values) {
+          const cleaned = String(val).trim()
+          if (
+            cleaned &&
+            cleaned.length > 0 &&
+            cleaned !== '案件管理ID' &&
+            cleaned !== '工事番号' &&
+            cleaned !== '現場No' &&
+            cleaned !== '物件No'
+          ) {
+            if (
+              !cleaned.match(/^\d{4}\/\d{1,2}\/\d{1,2}$/) &&
+              !cleaned.includes('請求') &&
+              !cleaned.includes('株式会社') &&
+              !cleaned.includes('ALLAGI')
+            ) {
+              defaultProjectId = cleaned
+              console.log(`✅ Found 案件管理ID: ${defaultProjectId}`)
+              break
+            }
+          }
+        }
+        if (defaultProjectId) break
+      }
+
+      if (
+        row['案件管理ID'] &&
+        String(row['案件管理ID']).trim() !== '案件管理ID'
+      ) {
+        defaultProjectId = String(row['案件管理ID']).trim()
+        console.log(`✅ Found 案件管理ID in column: ${defaultProjectId}`)
+        break
+      }
+    }
+
+    if (!defaultProjectId) {
+      console.warn('⚠️ WARNING: 案件管理ID not found in CSV header')
+    }
+
     // Find data start
     let dataStartIndex = -1
     for (let i = 0; i < Math.min(csvData.length, 30); i++) {
@@ -53,7 +110,7 @@ class OmegaJapanParser extends BaseParser {
       const rowText = values.join('|')
 
       if (
-        values.some(v => String(v).match(/^[箱本缶個枚式セットボトル㎡]$/)) ||
+        values.some(v => String(v).match(/^[箱本缶個枚式セットボトル㎥]$/)) ||
         rowText.includes('外断熱') ||
         rowText.includes('塗装工事')
       ) {
@@ -148,6 +205,21 @@ class OmegaJapanParser extends BaseParser {
         isShipping ? '配送料' : '',
       ].filter(Boolean)
 
+      // ✅ Extract 案件管理ID from row
+      let rowProjectId = ''
+      if (row['案件管理ID']) rowProjectId = String(row['案件管理ID']).trim()
+      else if (row['工事番号']) rowProjectId = String(row['工事番号']).trim()
+      else if (row['現場No']) rowProjectId = String(row['現場No']).trim()
+
+      let finalProjectId =
+        rowProjectId ||
+        defaultProjectId ||
+        `MISSING_ID_${siteName}_ROW${i}`.replace(/\s+/g, '_')
+
+      if (!rowProjectId && !defaultProjectId && i < dataStartIndex + 3) {
+        console.error(`  ❌ ERROR Row ${i}: No 案件管理ID in CSV`)
+      }
+
       const masterRow = createMasterRow({
         vendor: 'オメガジャパン',
         site: siteName || 'ALLAGI株式会社',
@@ -159,6 +231,8 @@ class OmegaJapanParser extends BaseParser {
         amount: cleanAmount,
         workNo: '',
         remarks: remarksParts.join(' '),
+        projectId: finalProjectId, // ✅ From CSV
+        result: '承認',
       })
 
       results.push(masterRow)
@@ -179,15 +253,11 @@ class OmegaJapanParser extends BaseParser {
     let dataStartIndex = -1
     let currentMonth = 8
     let currentYear = 2025
+    let defaultProjectId = ''
 
     console.log('Parsing INVOICE FORMAT...')
-    console.log('Sample rows:')
-    for (let i = 0; i < Math.min(5, csvData.length); i++) {
-      const values = Object.values(csvData[i])
-      console.log(`  Row ${i}:`, values.slice(0, 10))
-    }
 
-    // Extract period info from early rows
+    // Extract period and project ID
     for (let i = 0; i < Math.min(csvData.length, 15); i++) {
       const row = csvData[i]
       const values = Object.values(row)
@@ -197,22 +267,37 @@ class OmegaJapanParser extends BaseParser {
       if (periodMatch) {
         currentYear = parseInt(periodMatch[1])
         currentMonth = parseInt(periodMatch[2])
-        console.log(`  Found period: ${currentYear}年${currentMonth}月`)
+      }
+
+      // Look for project ID
+      if (
+        rowText.includes('案件管理ID') ||
+        rowText.includes('工事番号') ||
+        rowText.includes('現場No')
+      ) {
+        for (const val of values) {
+          const cleaned = String(val).trim()
+          if (
+            cleaned &&
+            cleaned.length > 0 &&
+            !cleaned.match(/^\d{4}\/\d{1,2}\/\d{1,2}$/) &&
+            !cleaned.includes('請求')
+          ) {
+            defaultProjectId = cleaned
+            console.log(`✅ Found 案件管理ID: ${defaultProjectId}`)
+            break
+          }
+        }
       }
 
       // Look for header row with "納品日" and "現場名"
       if (rowText.includes('納品日') && rowText.includes('現場名')) {
         dataStartIndex = i + 1
-        console.log(`  Found data start at row ${dataStartIndex}`)
         break
       }
     }
 
-    if (dataStartIndex === -1) {
-      // If no header found, start after first 10 rows
-      dataStartIndex = 10
-      console.log(`  No header found, starting at row ${dataStartIndex}`)
-    }
+    if (dataStartIndex === -1) dataStartIndex = 10
 
     for (let i = dataStartIndex; i < csvData.length; i++) {
       const row = csvData[i]
@@ -227,11 +312,8 @@ class OmegaJapanParser extends BaseParser {
         continue
       }
 
-      // First non-empty value should be delivery date
       let deliveryDate = nonEmptyValues[0]?.val || ''
-      // Second should be site name
       let siteName = nonEmptyValues[1]?.val || ''
-      // Last numeric value should be amount
       let taxIncludedAmount = ''
 
       for (let j = nonEmptyValues.length - 1; j >= 0; j--) {
@@ -241,12 +323,6 @@ class OmegaJapanParser extends BaseParser {
           taxIncludedAmount = val
           break
         }
-      }
-
-      if (i < dataStartIndex + 5) {
-        console.log(
-          `  Row ${i}: date="${deliveryDate}", site="${siteName}", amount="${taxIncludedAmount}"`
-        )
       }
 
       // Skip header/summary rows
@@ -283,6 +359,16 @@ class OmegaJapanParser extends BaseParser {
       const taxIncluded = parseFloat(cleanAmount) || 0
       const taxExcluded = Math.round(taxIncluded / 1.1)
 
+      // Extract project ID from row
+      let rowProjectId = ''
+      if (row['案件管理ID']) rowProjectId = String(row['案件管理ID']).trim()
+      else if (row['工事番号']) rowProjectId = String(row['工事番号']).trim()
+
+      let finalProjectId =
+        rowProjectId ||
+        defaultProjectId ||
+        `MISSING_ID_${siteName}_ROW${i}`.replace(/\s+/g, '_')
+
       const masterRow = createMasterRow({
         vendor: 'オメガジャパン',
         site: siteName.trim(),
@@ -294,7 +380,7 @@ class OmegaJapanParser extends BaseParser {
         amount: taxExcluded.toString(),
         workNo: '',
         remarks: deliveryDate.includes('追加') ? '追加工事' : '',
-        projectId: '', // Let system generate
+        projectId: finalProjectId, // ✅ From CSV
         result: '承認',
       })
 
