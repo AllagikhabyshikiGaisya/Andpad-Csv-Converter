@@ -14,8 +14,12 @@ class SankoSangyoParser extends BaseParser {
     const results = []
 
     const metadata = this.extractMetadata(csvData, 10)
-    let clientName = metadata.clientName || '三高産業'
+
+    // ✅ CRITICAL FIX: Force vendor name to be 三高産業
+    let clientName = '三高産業'
     let projectName = metadata.projectName
+
+    console.log('✓ Vendor name forced to: 三高産業')
 
     // ✅ Look for 案件管理ID in header (first 15 rows)
     let defaultProjectId = ''
@@ -139,9 +143,11 @@ class SankoSangyoParser extends BaseParser {
       let finalProjectId = ''
       if (rowProjectId) {
         finalProjectId = rowProjectId
-        console.log(
-          `  ✅ Row ${i}: Using 案件管理ID from row: ${finalProjectId}`
-        )
+        if (this.processedCount < 3) {
+          console.log(
+            `  ✅ Row ${i}: Using 案件管理ID from row: ${finalProjectId}`
+          )
+        }
       } else if (defaultProjectId) {
         finalProjectId = defaultProjectId
         if (i < dataStartIndex + 3) {
@@ -157,7 +163,7 @@ class SankoSangyoParser extends BaseParser {
       }
 
       const masterRow = createMasterRow({
-        vendor: clientName,
+        vendor: clientName, // ✅ Now always '三高産業'
         site: projectName,
         date: date,
         item: itemName,

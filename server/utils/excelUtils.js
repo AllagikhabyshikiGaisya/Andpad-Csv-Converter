@@ -13,7 +13,6 @@ const MASTER_COLUMNS = [
   '請求納品金額(税込)',
   '現場監督',
   '納品実績日',
-  '支払予定日',
   '請求納品明細名',
   '数量',
   '単位',
@@ -22,7 +21,6 @@ const MASTER_COLUMNS = [
   '金額(税抜)',
   '金額(税込)',
   '工事種類',
-  '課税フラグ',
 ]
 
 // PURCHASE PROJECT COLUMNS (仕入案件作成)
@@ -111,19 +109,16 @@ function getVendorSystemId(vendorName) {
   return systemId
 }
 
-// FIXED: Format is K + YYYYMMDD (last day of LAST month) + _NNN (3-digit sequence)
 function generateInvoiceManagementId(sequenceNumber = 1) {
   const today = new Date()
-
-  // Get last day of last month
   const lastDayOfLastMonth = new Date(today.getFullYear(), today.getMonth(), 0)
 
   const year = lastDayOfLastMonth.getFullYear()
   const month = String(lastDayOfLastMonth.getMonth() + 1).padStart(2, '0')
   const day = String(lastDayOfLastMonth.getDate()).padStart(2, '0')
-  const seq = String(sequenceNumber).padStart(3, '0')
+  const sequenceNum = String(sequenceNumber)
 
-  return `K${year}${month}${day}_${seq}`
+  return `K${year}${month}${day}_${sequenceNum}`
 }
 
 function generateProjectId() {
@@ -236,8 +231,6 @@ function createMasterRow(data) {
 
   row['納品実績日'] = formatDate(invoiceDate)
 
-  row['支払予定日'] = calculatePaymentDueDate(invoiceDate)
-
   row['請求納品明細名'] = invoiceName
 
   row['数量'] = cleanNumber(data.qty || '') || '1'
@@ -257,8 +250,6 @@ function createMasterRow(data) {
   }
 
   row['工事種類'] = determineConstructionType(data.item || '', vendorName)
-
-  row['課税フラグ'] = '課税'
 
   // Metadata fields for consolidation
   row['_siteName'] = siteName
@@ -582,8 +573,6 @@ function consolidateByProjectId(rows) {
 
     if (metadataInvoiceDate) {
       consolidatedRow['納品実績日'] = formatDate(metadataInvoiceDate)
-      consolidatedRow['支払予定日'] =
-        calculatePaymentDueDate(metadataInvoiceDate)
       console.log(`   ✓ Using metadata date: ${consolidatedRow['納品実績日']}`)
     }
 
