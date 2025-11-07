@@ -1,5 +1,5 @@
 // ============================================
-// EXCEL UTILITIES - COMPLETE FIXED VERSION WITH PROJECT ID HANDLING
+// EXCEL UTILITIES - WITH 直接入力フラグ COLUMN ADDED
 // ============================================
 
 const MASTER_COLUMNS = [
@@ -21,6 +21,7 @@ const MASTER_COLUMNS = [
   '金額(税抜)',
   '金額(税込)',
   '工事種類',
+  '直接入力フラグ', // ✅ ADDED AT THE END
 ]
 
 // PURCHASE PROJECT COLUMNS (仕入案件作成)
@@ -95,6 +96,7 @@ const ANDPAD_DEFAULTS = {
   取引設定: '紙発注',
   担当者_発注側: '925646',
   現場監督: '925646',
+  直接入力フラグ: 'TRUE', // ✅ DEFAULT VALUE FOR NEW COLUMN
 }
 
 // Global counters
@@ -148,7 +150,6 @@ function getProjectIdForSite(vendorName, siteName) {
   return newProjectId
 }
 
-// FIXED: Invoice name format YYYYMM_業者名_請求書 (with underscores!)
 function generateInvoiceName(vendorName, invoiceDate = null) {
   let year, month
 
@@ -174,13 +175,8 @@ function generateInvoiceName(vendorName, invoiceDate = null) {
 }
 
 // ============================================
-// CRITICAL FIX: createMasterRow with proper 案件管理ID handling
+// UPDATED createMasterRow WITH 直接入力フラグ
 // ============================================
-// ============================================
-// UPDATED createMasterRow FUNCTION
-// Place this in excelUtils.js to replace the existing function
-// ============================================
-
 function createMasterRow(data) {
   const row = {}
 
@@ -206,26 +202,12 @@ function createMasterRow(data) {
   const siteName = String(data.site || '').trim()
   const providedProjectId = String(data.projectId || '').trim()
 
-  // ============================================
-  // CRITICAL: ALWAYS use provided 案件管理ID from source CSV
-  // Rule: "原本CSVの案件管理IDを入力"
-  // Rule: "同じ案件管理IDのものはインポート後に1行に情報を集約"
-  // ============================================
   if (providedProjectId && providedProjectId !== '') {
     row['案件管理ID'] = providedProjectId
-
-    // Only log for non-MISSING IDs
-    if (!providedProjectId.startsWith('MISSING_ID_')) {
-      // Success - using CSV data
-    }
   } else {
-    // ❌ This should RARELY happen - log as error
     console.error(`❌ ERROR: No 案件管理ID provided for vendor "${vendorName}"`)
     console.error(`   Site: "${siteName}"`)
     console.error(`   This violates the rule: "原本CSVの案件管理IDを入力"`)
-    console.error(`   The source CSV MUST contain 案件管理ID column or header`)
-
-    // Emergency fallback only - clearly marked
     row['案件管理ID'] = `ERROR_NO_ID_${siteName.replace(/\s+/g, '_')}`
   }
 
@@ -252,6 +234,9 @@ function createMasterRow(data) {
   }
 
   row['工事種類'] = determineConstructionType(data.item || '', vendorName)
+
+  // ✅ ALWAYS SET 直接入力フラグ TO "TRUE"
+  row['直接入力フラグ'] = ANDPAD_DEFAULTS.直接入力フラグ
 
   // Metadata fields for consolidation
   row['_siteName'] = siteName
@@ -284,7 +269,6 @@ function createPurchaseProjectRow(data) {
   return row
 }
 
-// FIXED: Calculate payment due date - end of next month
 function calculatePaymentDueDate(invoiceDate) {
   if (!invoiceDate) return ''
 
@@ -301,10 +285,7 @@ function calculatePaymentDueDate(invoiceDate) {
 
     const date = new Date(year, month, day)
 
-    // Move to next month
     date.setMonth(date.getMonth() + 1)
-
-    // Set to last day of that month
     date.setMonth(date.getMonth() + 1)
     date.setDate(0)
 
@@ -413,7 +394,6 @@ function determineConstructionType(itemDescription, vendorName) {
   return 'その他'
 }
 
-// CRITICAL: Apply vendor-specific rules (大萬 1% discount)
 function applyVendorSpecificRules(rows, vendorName) {
   if (
     vendorName === '大萬' ||
@@ -469,7 +449,6 @@ function calculateInvoiceTotals(rows) {
   }
 }
 
-// FIXED: Validation for totals (±1% tolerance)
 function validateTotals(rows, vendorName) {
   rows.forEach((row, index) => {
     const invoiceAmountExcluded = parseFloat(row['請求納品金額(税抜)']) || 0
@@ -488,17 +467,12 @@ function validateTotals(rows, vendorName) {
   })
 }
 
-// ============================================
-// CRITICAL FIX: consolidateByProjectId
-// Rule: "同じ案件管理IDのものはインポート後に1行に情報を集約"
-// ============================================
 function consolidateByProjectId(rows) {
   if (!rows || rows.length === 0) return rows
 
   console.log('\n=== CONSOLIDATING ROWS BY 案件管理ID ===')
   console.log(`Input: ${rows.length} rows`)
 
-  // Group by 案件管理ID (the actual project ID from source)
   const projectGroups = {}
 
   rows.forEach(row => {
@@ -543,13 +517,11 @@ function consolidateByProjectId(rows) {
       }
     })
 
-    // Generate new 請求管理ID for consolidated row
     consolidatedRow['請求管理ID'] = generateInvoiceManagementId(
       consolidatedSequence++
     )
     console.log(`   ✓ New 請求管理ID: ${consolidatedRow['請求管理ID']}`)
 
-    // CRITICAL: Keep the original 案件管理ID from source CSV
     consolidatedRow['案件管理ID'] = projectId
     console.log(`   ✓ Keeping original 案件管理ID: ${projectId}`)
 
@@ -572,6 +544,9 @@ function consolidateByProjectId(rows) {
 
     consolidatedRow['請求名'] = correctInvoiceName
     consolidatedRow['請求納品明細名'] = correctInvoiceName
+
+    // ✅ ENSURE 直接入力フラグ IS ALWAYS "TRUE" IN CONSOLIDATED ROWS
+    consolidatedRow['直接入力フラグ'] = 'TRUE'
 
     if (metadataInvoiceDate) {
       consolidatedRow['納品実績日'] = formatDate(metadataInvoiceDate)
@@ -633,14 +608,11 @@ function addInvoiceTotalsToRows(rows) {
     })
   })
 
-  // Consolidate by 案件管理ID
   const consolidatedRows = consolidateByProjectId(rows)
 
-  // Validate totals after consolidation
   const vendorName = consolidatedRows[0]?._vendorName || 'Unknown'
   validateTotals(consolidatedRows, vendorName)
 
-  // Clean up temporary fields
   consolidatedRows.forEach(row => {
     delete row['_siteName']
     delete row['_itemName']
@@ -741,6 +713,7 @@ function calculateUnitPrice(amount, quantity) {
   return ''
 }
 
+// ✅ UPDATED: Added column width for 直接入力フラグ
 function setColumnWidths(worksheet, columns) {
   worksheet['!cols'] = columns.map(col => {
     if (col.includes('管理ID')) return { wch: 18 }
@@ -751,6 +724,7 @@ function setColumnWidths(worksheet, columns) {
     if (col.includes('担当者') || col.includes('監督')) return { wch: 12 }
     if (col.includes('日')) return { wch: 14 }
     if (col.includes('金額') || col.includes('単価')) return { wch: 14 }
+    if (col === '直接入力フラグ') return { wch: 12 } // ✅ ADDED
     return { wch: 12 }
   })
 }

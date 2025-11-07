@@ -52,6 +52,7 @@ function logTestResults(vendor, csvData, transformedData, stage = 'COMPLETE') {
     console.log(`    工事種類: ${firstRow['工事種類']}`)
     console.log(`    数量: ${firstRow['数量']}`)
     console.log(`    単位: ${firstRow['単位']}`)
+    console.log(`    直接入力フラグ: ${firstRow['直接入力フラグ']}`) // ✅ ADDED
   }
 
   console.log('\n💰 FINANCIAL SUMMARY:')
@@ -162,7 +163,7 @@ function logTestResults(vendor, csvData, transformedData, stage = 'COMPLETE') {
     `  [${idFormatCorrect ? '✓' : '✗'}] 請求管理ID format (YYYYMMDDNNN)`
   )
 
-  // Check 10: Invoice name format (YYYYMM_業者名_請求書) - UPDATED FORMAT
+  // Check 10: Invoice name format (YYYYMM_業者名_請求書)
   const invoiceNameFormat = transformedData.every(row => {
     const name = row['請求名']
     return name && name.match(/^\d{6}_.*_請求書$/)
@@ -181,10 +182,18 @@ function logTestResults(vendor, csvData, transformedData, stage = 'COMPLETE') {
   const unitCorrect = transformedData.every(row => row['単位'] === '式')
   console.log(`  [${unitCorrect ? '✓' : '✗'}] 単位 = 式 (consolidated)`)
 
+  // ✅ NEW CHECK 13: 直接入力フラグ = 'TRUE' for all rows
+  const directInputFlagCorrect = transformedData.every(
+    row => row['直接入力フラグ'] === 'TRUE'
+  )
+  console.log(
+    `  [${directInputFlagCorrect ? '✓' : '✗'}] 直接入力フラグ = 'TRUE' (all rows)`
+  )
+
   console.log('\n📊 SAMPLE OUTPUT ROWS (First 2):')
   transformedData.slice(0, 2).forEach((row, idx) => {
     console.log(`\n  --- Row ${idx + 1} ---`)
-    // Show only defined columns (no 備考 or 結果)
+    // Show all defined columns including new one
     const displayColumns = [
       '請求管理ID',
       '取引先',
@@ -205,7 +214,7 @@ function logTestResults(vendor, csvData, transformedData, stage = 'COMPLETE') {
       '金額(税抜)',
       '金額(税込)',
       '工事種類',
-      '課税フラグ',
+      '直接入力フラグ', // ✅ ADDED
     ]
 
     displayColumns.forEach(col => {
@@ -379,8 +388,9 @@ function parseWithMapping(csvData, mapping) {
       masterRow['単価(税込)'] = Math.round(price * 1.1).toString()
     }
 
-    if (!masterRow['課税フラグ']) {
-      masterRow['課税フラグ'] = '課税'
+    // ✅ ENSURE 直接入力フラグ IS SET TO "TRUE"
+    if (!masterRow['直接入力フラグ']) {
+      masterRow['直接入力フラグ'] = 'TRUE'
     }
 
     results.push(masterRow)
